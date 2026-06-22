@@ -5,10 +5,20 @@ model across departments and the C-suite. It connects current roster and
 compensation to structured hiring requests, reconciled against budget and runway,
 with role-based access and compensation confidentiality enforced on the server.
 
-> **Status: M0 — foundation.** The app boots, runs database migrations on start,
-> serves a home page, and ships a passing test suite. Sign-in, accounts, roster
-> import, hiring requests, dashboards, and the planning engine arrive in later
-> milestones. See [`docs/ARCHITECTURE_PLAN.md`](docs/ARCHITECTURE_PLAN.md).
+> **Status: M1 — authentication & accounts (complete, tested).** The app has
+> secure sign-in, an admin who manages accounts, the three roles
+> (Finance Admin / C-Suite / Manager) with server-enforced compensation
+> visibility, invite links, and an audit log. Roster import, hiring requests,
+> dashboards, and the planning engine are the next milestones. See
+> [`docs/ARCHITECTURE_PLAN.md`](docs/ARCHITECTURE_PLAN.md).
+
+## First run
+
+After deploying, open the app's URL. Because there are no users yet, it sends you
+to **/setup** to create the **owner account** (the Finance Admin). From then on
+that page is closed and everyone signs in at **/login**. The owner adds other
+people from the **Accounts** page — either by setting a temporary password or by
+generating an invite link they use to set their own password.
 
 ## What makes this easy to host
 

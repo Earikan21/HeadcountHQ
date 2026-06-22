@@ -1,16 +1,27 @@
 /**
- * Builds the HTTP server: security headers, static assets, and routes. Kept
- * separate from server start-up so tests can listen on an ephemeral port.
+ * Builds the HTTP server and the per-request context. Responsibilities:
+ *  - security headers
+ *  - static assets (with path-traversal protection)
+ *  - cookie parsing + helpers
+ *  - form body parsing (urlencoded + multipart for uploads)
+ *  - session/user attachment (the auth middleware)
+ *  - CSRF protection (double-submit cookie) for all POSTs
+ *  - dispatch to the router
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize } from "node:path";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { Router } from "./router.js";
 import { registerRoutes } from "./routes.js";
+import { getSession } from "./auth/sessions.js";
+import { parseBody } from "./http_body.js";
+import { SESSION_COOKIE, CSRF_COOKIE } from "./constants.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(here, "..", "public");
+const MAX_BODY = 12 * 1024 * 1024; // 12 MB (roster uploads)
 
 const STATIC_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -20,58 +31,151 @@ const STATIC_TYPES = {
   ".ico": "image/x-icon",
 };
 
-/**
- * @param {{ config: any, db: import("node:sqlite").DatabaseSync }} deps
- * @returns {import("node:http").Server}
- */
 export function buildApp({ config, db }) {
   const router = new Router();
   registerRoutes(router, { config, db });
 
   const server = createServer(async (req, res) => {
+    const ctx = makeContext(req, res, { config, db });
     try {
       setSecurityHeaders(res, config);
-      const url = new URL(req.url, "http://localhost");
-      const pathname = url.pathname;
+      const pathname = ctx.url.pathname;
 
-      // Static assets.
       if (pathname.startsWith("/static/")) {
         return await serveStatic(pathname.slice("/static/".length), res);
       }
 
-      const matched = router.match(req.method, pathname);
-      if (!matched) return send(res, 404, "text/plain; charset=utf-8", "Not found");
+      // Cookies + CSRF token (double-submit). Ensure a CSRF cookie exists.
+      ensureCsrfCookie(ctx);
+      // Attach the logged-in user, if any.
+      attachUser(ctx);
 
-      const ctx = { req, res, url, params: matched.params, config, db, send };
+      const matched = router.match(req.method, pathname);
+      if (!matched) return ctx.send(404, "text/html; charset=utf-8", notFoundPage());
+
+      if (req.method === "POST") {
+        await parseBody(req, ctx, MAX_BODY);
+        if (!csrfOk(ctx)) return ctx.send(403, "text/plain; charset=utf-8", "Invalid CSRF token");
+      }
+
+      ctx.params = matched.params;
       await matched.handler(ctx);
     } catch (err) {
-      // Never leak internals to the client.
-      // eslint-disable-next-line no-console
       console.error(err);
-      if (!res.headersSent) send(res, 500, "text/plain; charset=utf-8", "Internal Server Error");
+      if (!res.headersSent) ctx.send(500, "text/html; charset=utf-8", errorPage());
     }
   });
 
   return server;
 }
 
-function setSecurityHeaders(res, config) {
-  res.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self' data:");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  if (config.COOKIE_SECURE) {
-    res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+function makeContext(req, res, { config, db }) {
+  const url = new URL(req.url, "http://localhost");
+  const cookies = parseCookies(req.headers.cookie || "");
+  const setCookies = [];
+
+  const ctx = {
+    req, res, url, config, db,
+    params: {},
+    query: url.searchParams,
+    cookies,
+    body: {},
+    files: {},
+    user: null,
+    session: null,
+    csrf: cookies[CSRF_COOKIE] || "",
+    setCookie(name, value, opts = {}) {
+      setCookies.push(serializeCookie(name, value, { httpOnly: true, sameSite: "Lax", path: "/", secure: config.COOKIE_SECURE, ...opts }));
+    },
+    clearCookie(name) {
+      setCookies.push(serializeCookie(name, "", { path: "/", maxAge: 0 }));
+    },
+    _flush() {
+      if (setCookies.length) res.setHeader("Set-Cookie", setCookies);
+    },
+    send(status, type, bodyStr) {
+      ctx._flush();
+      res.writeHead(status, { "Content-Type": type });
+      res.end(bodyStr);
+    },
+    html(status, htmlStr) { ctx.send(status, "text/html; charset=utf-8", String(htmlStr)); },
+    json(status, obj) { ctx.send(status, "application/json; charset=utf-8", JSON.stringify(obj)); },
+    redirect(location, status = 303) {
+      ctx._flush();
+      res.writeHead(status, { Location: location });
+      res.end();
+    },
+    attachment(filename, type, bodyStr) {
+      ctx._flush();
+      res.writeHead(200, {
+        "Content-Type": type,
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      });
+      res.end(bodyStr);
+    },
+  };
+  return ctx;
+}
+
+function ensureCsrfCookie(ctx) {
+  if (!ctx.csrf) {
+    ctx.csrf = randomBytes(24).toString("hex");
+    ctx.setCookie(CSRF_COOKIE, ctx.csrf);
   }
 }
 
-function send(res, status, type, body) {
-  res.writeHead(status, { "Content-Type": type });
-  res.end(body);
+function csrfOk(ctx) {
+  const sent = String(ctx.body._csrf || "");
+  const cookie = String(ctx.csrf || "");
+  if (!sent || !cookie || sent.length !== cookie.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(sent), Buffer.from(cookie));
+  } catch {
+    return false;
+  }
+}
+
+function attachUser(ctx) {
+  const token = ctx.cookies[SESSION_COOKIE];
+  const found = getSession(ctx.db, token);
+  if (found) {
+    ctx.user = found.user;
+    ctx.session = found.session;
+  }
+}
+
+// ---- helpers ----
+function setSecurityHeaders(res, config) {
+  res.setHeader("Content-Security-Policy", "default-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  if (config.COOKIE_SECURE) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+}
+
+function parseCookies(header) {
+  const out = {};
+  for (const part of header.split(";")) {
+    const i = part.indexOf("=");
+    if (i === -1) continue;
+    const k = part.slice(0, i).trim();
+    const v = part.slice(i + 1).trim();
+    if (k) out[k] = decodeURIComponent(v);
+  }
+  return out;
+}
+
+function serializeCookie(name, value, opts) {
+  let s = `${name}=${encodeURIComponent(value)}`;
+  if (opts.path) s += `; Path=${opts.path}`;
+  if (opts.maxAge !== undefined) s += `; Max-Age=${opts.maxAge}`;
+  if (opts.httpOnly) s += "; HttpOnly";
+  if (opts.sameSite) s += `; SameSite=${opts.sameSite}`;
+  if (opts.secure) s += "; Secure";
+  return s;
 }
 
 async function serveStatic(relPath, res) {
-  // Prevent path traversal: normalise and reject anything climbing out of /public.
   const safeRel = normalize(relPath).replace(/^(\.\.(\/|\\|$))+/, "");
   const full = join(PUBLIC_DIR, safeRel);
   if (!full.startsWith(PUBLIC_DIR)) return send(res, 403, "text/plain", "Forbidden");
@@ -82,4 +186,14 @@ async function serveStatic(relPath, res) {
   } catch {
     send(res, 404, "text/plain; charset=utf-8", "Not found");
   }
+}
+function send(res, status, type, body) {
+  res.writeHead(status, { "Content-Type": type });
+  res.end(body);
+}
+function notFoundPage() {
+  return "<!doctype html><meta charset=utf-8><title>Not found</title><p style='font-family:sans-serif;padding:40px'>Page not found. <a href='/'>Home</a></p>";
+}
+function errorPage() {
+  return "<!doctype html><meta charset=utf-8><title>Error</title><p style='font-family:sans-serif;padding:40px'>Something went wrong. Please try again.</p>";
 }
