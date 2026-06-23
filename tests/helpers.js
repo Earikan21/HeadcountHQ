@@ -88,5 +88,29 @@ export function makeClient(base) {
       body: bodyStr,
     });
   }
-  return { jar, get, post };
+  async function upload(path, fields = {}, file = null) {
+    const boundary = "----hcqtest" + Math.random().toString(16).slice(2);
+    const all = { ...fields };
+    if (!("_csrf" in all) && jar.hq_csrf) all._csrf = jar.hq_csrf;
+    const parts = [];
+    for (const [k, v] of Object.entries(all)) {
+      parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+    }
+    if (file) {
+      parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${file.field}"; filename="${file.filename}"\r\nContent-Type: text/csv\r\n\r\n`));
+      parts.push(Buffer.from(file.content, "utf8"));
+      parts.push(Buffer.from("\r\n"));
+    }
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
+    const body = Buffer.concat(parts);
+    return request("POST", path, {
+      headers: {
+        cookie: cookieHeader(),
+        "content-type": `multipart/form-data; boundary=${boundary}`,
+        "content-length": body.length,
+      },
+      body,
+    });
+  }
+  return { jar, get, post, upload };
 }

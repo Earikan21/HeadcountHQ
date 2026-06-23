@@ -1,0 +1,321 @@
+import { html, raw } from "../html.js";
+import { renderPage, csrfField, errorList, money } from "../views/ui.js";
+import { requireAuth, requirePermission } from "../middleware.js";
+import { canImportRoster, compVisibility, canViewCompTotals, departmentScope } from "../authz.js";
+import { parseCsv, toCsv } from "../domain/csv.js";
+import * as R from "../domain/roster.js";
+import { logAudit } from "../repos/audit.js";
+import {
+  createBatch, getBatch, updateBatchMapping, setBatchStatus, listBatches,
+  upsertDepartmentByName, upsertEmployee, listEmployees,
+} from "../repos/roster.js";
+
+const compCell = (user, annual) => {
+  if (annual == null) return "—";
+  return compVisibility(user) === "exact" ? money(annual) : (R.band(annual) || "—");
+};
+
+export function registerRosterRoutes(router) {
+  // ---- Roster view (all signed-in users; scoped + comp-limited by role) ----
+  router.get("/roster", (ctx) => {
+    if (!requireAuth(ctx)) return;
+    const scope = departmentScope(ctx.user);
+    const employees = listEmployees(ctx.db, { departmentId: scope });
+    ctx.html(200, rosterPage(ctx, { employees }));
+  });
+
+  router.get("/roster/export.csv", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const employees = listEmployees(ctx.db, {});
+    const rows = employees.map((e) => ({
+      employee_id: e.employee_ext_id, name: e.name, department: e.department_name,
+      job_title: e.job_title, manager: e.manager, employee_type: e.employee_type,
+      employment_status: e.employment_status, compensation_amount: e.comp_amount,
+      compensation_unit: e.comp_unit, annual_salary: e.annual_salary,
+    }));
+    logAudit(ctx.db, { userId: ctx.user.id, action: "roster.exported", entity: "employee", detail: { count: rows.length } });
+    ctx.attachment("roster-clean.csv", "text/csv; charset=utf-8", toCsv(R.EXPORT_COLS, rows));
+  });
+
+  // ---- Step 1: upload ----
+  router.get("/roster/import", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    ctx.html(200, uploadPage(ctx, {}));
+  });
+  router.post("/roster/import", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const file = ctx.files.file;
+    if (!file || !file.data || !file.data.length) {
+      return ctx.html(400, uploadPage(ctx, { errors: ["Please choose a CSV file to upload."] }));
+    }
+    const { headers, rows } = parseCsv(file.data.toString("utf8"));
+    if (!headers.length || !rows.length) {
+      return ctx.html(400, uploadPage(ctx, { errors: ["That file has no readable rows. Export your roster as CSV and try again."] }));
+    }
+    const { mapping } = R.autoMap(headers);
+    const batch = createBatch(ctx.db, { filename: file.filename, headers, rawRows: rows, mapping, createdBy: ctx.user.id });
+    logAudit(ctx.db, { userId: ctx.user.id, action: "import.uploaded", entity: "import_batch", entityId: batch.id, detail: { filename: file.filename, rows: rows.length } });
+    ctx.redirect(`/roster/import/${batch.id}/map`);
+  });
+
+  // ---- Step 2: map columns ----
+  router.get("/roster/import/:id/map", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    ctx.html(200, mapPage(ctx, { batch }));
+  });
+  router.post("/roster/import/:id/map", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    const mapping = {};
+    for (const f of R.SCHEMA) {
+      const v = ctx.body[`map_${f.key}`] || "";
+      mapping[f.key] = v && batch.headers.includes(v) ? v : null;
+    }
+    const missing = R.SCHEMA.filter((f) => f.required && !mapping[f.key]).map((f) => f.label);
+    if (missing.length) {
+      batch.mapping = mapping;
+      return ctx.html(400, mapPage(ctx, { batch, errors: ["Map required fields: " + missing.join(", ")] }));
+    }
+    updateBatchMapping(ctx.db, batch.id, mapping);
+    ctx.redirect(`/roster/import/${batch.id}/review`);
+  });
+
+  // ---- Step 3: review ----
+  router.get("/roster/import/:id/review", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    const built = R.buildCanonical(batch.rawRows, batch.mapping);
+    ctx.html(200, reviewPage(ctx, { batch, built }));
+  });
+
+  // ---- Commit / discard ----
+  router.post("/roster/import/:id/commit", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    const built = R.buildCanonical(batch.rawRows, batch.mapping);
+    let committed = 0;
+    for (const row of built.rows) {
+      if (!row._ok) continue;
+      const deptId = upsertDepartmentByName(ctx.db, row.department);
+      upsertEmployee(ctx.db, row, deptId);
+      committed++;
+    }
+    setBatchStatus(ctx.db, batch.id, "committed", committed);
+    logAudit(ctx.db, { userId: ctx.user.id, action: "import.committed", entity: "import_batch", entityId: batch.id, detail: { committed } });
+    ctx.redirect(`/roster?msg=Imported+${committed}+employees`);
+  });
+
+  router.post("/roster/import/:id/discard", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (batch && batch.status === "draft") setBatchStatus(ctx.db, batch.id, "discarded");
+    ctx.redirect("/roster/import");
+  });
+}
+
+// ============ views ============
+function deptRollup(employees) {
+  const by = {};
+  let hc = 0, cost = 0;
+  for (const e of employees) {
+    const d = e.department_name || "(none)";
+    by[d] = by[d] || { department: d, headcount: 0, annualCost: 0 };
+    by[d].headcount++; by[d].annualCost += e.annual_salary || 0;
+    hc++; cost += e.annual_salary || 0;
+  }
+  const departments = Object.values(by).sort((a, b) => b.annualCost - a.annualCost);
+  return { departments, totals: { headcount: hc, annualCost: cost, avgCost: hc ? Math.round(cost / hc) : 0 } };
+}
+
+function rosterPage(ctx, { employees }) {
+  const isAdmin = canImportRoster(ctx.user);
+  const showTotals = canViewCompTotals(ctx.user);
+  const roll = deptRollup(employees);
+
+  const kpis = [
+    kpi("Headcount", roll.totals.headcount),
+    kpi("Departments", roll.departments.length),
+  ];
+  if (showTotals) {
+    kpis.push(kpi("Total annual cost", money(roll.totals.annualCost)));
+    kpis.push(kpi("Avg / employee", money(roll.totals.avgCost)));
+  }
+
+  const empty = employees.length === 0;
+  const rows = employees.map((e) => html`<tr>
+      <td><b>${e.name}</b><div class="sub">${e.employee_ext_id}</div></td>
+      <td>${e.department_name || "—"}</td>
+      <td>${e.job_title || "—"}</td>
+      <td>${statusPill(e.employment_status)}</td>
+      <td class="right">${compCell(ctx.user, e.annual_salary)}</td>
+    </tr>`);
+
+  const deptRows = roll.departments.map((d) => html`<tr>
+      <td><b>${d.department}</b></td>
+      <td class="right">${d.headcount}</td>
+      ${showTotals ? html`<td class="right">${money(d.annualCost)}</td>` : ""}
+    </tr>`);
+
+  const body = html`
+    <div class="pagehead row-between">
+      <div><h1>Roster</h1><p class="muted">${isAdmin ? "Your current people and compensation." : (compVisibility(ctx.user) === "exact" ? "" : "Compensation is shown as bands.")} ${departmentScope(ctx.user) != null ? "You see your own department." : ""}</p></div>
+      ${isAdmin ? html`<div class="actions"><a class="btn" href="/roster/import">Import roster</a> <a class="btn ghost" href="/roster/export.csv">Export CSV</a></div>` : ""}
+    </div>
+    <div class="kpis">${kpis}</div>
+    ${empty
+      ? html`<div class="card"><p class="muted">No employees yet.${isAdmin ? html` Start by <a href="/roster/import">importing your roster</a>.` : ""}</p></div>`
+      : html`<div class="grid2">
+          <section class="card">
+            <h2>People</h2>
+            <table class="table">
+              <thead><tr><th>Name</th><th>Department</th><th>Title</th><th>Status</th><th class="right">${compVisibility(ctx.user) === "exact" ? "Annual" : "Band"}</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </section>
+          <section class="card">
+            <h2>By department</h2>
+            <table class="table">
+              <thead><tr><th>Department</th><th class="right">HC</th>${showTotals ? raw("<th class='right'>Annual cost</th>") : ""}</tr></thead>
+              <tbody>${deptRows}</tbody>
+            </table>
+          </section>
+        </div>`}`;
+  return renderPage(ctx, { title: "Roster", body, active: "roster" });
+}
+
+function wizardSteps(active) {
+  const steps = [["upload", "Upload"], ["map", "Map columns"], ["review", "Review & import"]];
+  return raw(`<div class="wsteps">${steps.map(([k, l], i) =>
+    `<span class="wstep ${k === active ? "on" : ""}"><b>${i + 1}</b> ${l}</span>`).join('<span class="warr">›</span>')}</div>`);
+}
+
+function uploadPage(ctx, { errors }) {
+  const recent = listBatches(ctx.db).filter((b) => b.status === "committed").slice(0, 3);
+  const body = html`
+    <div class="pagehead"><h1>Import roster</h1></div>
+    ${wizardSteps("upload")}
+    ${errorList(errors)}
+    <section class="card narrow">
+      <div class="flash">Upload your roster as a <b>.csv</b> file. Need Excel? In Excel choose <i>File → Save As → CSV</i> first. Everything is processed on your own server.</div>
+      <form method="post" action="/roster/import" enctype="multipart/form-data">
+        ${csrfField(ctx)}
+        <label>Roster file (.csv)<input type="file" name="file" accept=".csv,text/csv" required></label>
+        <button class="btn" type="submit">Upload &amp; continue</button>
+      </form>
+    </section>
+    ${recent.length ? html`<section class="card narrow"><h2>Recent imports</h2>
+      <table class="table"><tbody>${recent.map((b) => html`<tr><td>${b.filename || "(file)"}</td><td class="right muted">${b.clean_count} imported</td><td class="right muted">${b.committed_at || ""}</td></tr>`)}</tbody></table>
+    </section>` : ""}`;
+  return renderPage(ctx, { title: "Import roster", body, active: "roster" });
+}
+
+function mapPage(ctx, { batch, errors }) {
+  const { confidence } = R.autoMap(batch.headers);
+  const opts = (sel) => raw(['<option value="">— not mapped —</option>']
+    .concat(batch.headers.map((h) => `<option value="${escAttr(h)}" ${batch.mapping[sel] === h ? "selected" : ""}>${escHtml(h)}</option>`))
+    .join(""));
+  const rows = R.SCHEMA.map((f) => {
+    const conf = confidence[f.key];
+    const badge = !batch.mapping[f.key] ? '<span class="badge b-none">Unmapped</span>'
+      : conf === "high" ? '<span class="badge b-high">Matched</span>'
+      : conf === "low" ? '<span class="badge b-low">Check this</span>' : '<span class="badge b-high">Set</span>';
+    return html`<div class="map-row">
+      <div class="canon">${f.label} ${f.required ? raw('<span class="req">*</span>') : ""}</div>
+      <select name="map_${f.key}">${opts(f.key)}</select>
+      <div>${raw(badge)}</div>
+    </div>`;
+  });
+  const body = html`
+    <div class="pagehead"><h1>Map your columns</h1><p class="muted">${batch.filename} · ${batch.rawRows.length} rows</p></div>
+    ${wizardSteps("map")}
+    ${errorList(errors)}
+    <section class="card">
+      <div class="flash">We matched your file's columns to our standard fields. Confirm or fix each one. <b>*</b> required.</div>
+      <form method="post" action="/roster/import/${batch.id}/map">
+        ${csrfField(ctx)}
+        <div class="map-head"><span>Standard field</span><span>Your column</span><span></span></div>
+        ${rows}
+        <div class="actions" style="margin-top:16px">
+          <button class="btn" type="submit">Continue to review</button>
+          <form method="post" action="/roster/import/${batch.id}/discard" class="inline">${csrfField(ctx)}<button class="linklike" type="submit">Discard</button></form>
+        </div>
+      </form>
+    </section>`;
+  return renderPage(ctx, { title: "Map columns", body, active: "roster" });
+}
+
+function reviewPage(ctx, { batch, built }) {
+  const s = built.summary;
+  const issues = [];
+  for (const r of built.rows) for (const x of r._issues) issues.push({ row: r._row, ...x });
+  const errs = issues.filter((x) => x.level === "error").slice(0, 15);
+  const warns = issues.filter((x) => x.level === "warn").slice(0, 15);
+
+  const flags = (list, cls, icon) => list.map((x) => html`<div class="flag ${cls}"><b>Row ${x.row}</b> · ${x.msg}</div>`);
+  const preview = built.rows.slice(0, 25).map((r) => {
+    const errFields = new Set(r._issues.filter((x) => x.level === "error").map((x) => x.field));
+    const cell = (k, v) => html`<td class="${errFields.has(k) ? "cell-err" : ""}">${v}</td>`;
+    return html`<tr class="${r._ok ? "" : "rowerr"}">
+      <td class="muted">${r._row}</td>
+      ${cell("employee_id", r.employee_id || "—")}
+      ${cell("name", r.name || "—")}
+      ${cell("department", r.department || "—")}
+      <td>${r.job_title || "—"}</td>
+      ${cell("compensation_amount", r.compensation_amount == null ? "—" : r.compensation_amount.toLocaleString())}
+      <td>${r.annual_salary == null ? "—" : money(r.annual_salary)}</td>
+    </tr>`;
+  });
+
+  const body = html`
+    <div class="pagehead"><h1>Review &amp; import</h1><p class="muted">${batch.filename}</p></div>
+    ${wizardSteps("review")}
+    <div class="kpis">
+      ${kpi("Total rows", s.total)}
+      ${kpiC("Clean & ready", s.clean, "good")}
+      ${kpiC("Rows with errors", s.withErrors, s.withErrors ? "bad" : "")}
+      ${kpiC("Warnings", s.warns, s.warns ? "warn" : "")}
+    </div>
+    <div class="grid2">
+      <section class="card">
+        <h2>Data preview</h2>
+        <div class="tbl-scroll"><table class="table">
+          <thead><tr><th>#</th><th>Employee ID</th><th>Name</th><th>Dept</th><th>Title</th><th>Amount</th><th>Annual</th></tr></thead>
+          <tbody>${preview}</tbody>
+        </table></div>
+        ${built.rows.length > 25 ? html`<p class="muted small">Showing first 25 of ${built.rows.length} rows.</p>` : ""}
+      </section>
+      <section class="card">
+        <h2>Issues</h2>
+        ${errs.length || warns.length
+          ? html`${flags(errs, "e")}${flags(warns, "w")}`
+          : raw('<div class="flag g">No issues found.</div>')}
+        <div class="actions" style="margin-top:16px">
+          <form method="post" action="/roster/import/${batch.id}/commit" class="inline">
+            ${csrfField(ctx)}
+            <button class="btn" type="submit" ${s.clean ? "" : "disabled"}>Import ${s.clean} clean row${s.clean === 1 ? "" : "s"}</button>
+          </form>
+          <a class="btn ghost" href="/roster/import/${batch.id}/map">Back to mapping</a>
+        </div>
+        ${s.withErrors ? html`<p class="muted small">${s.withErrors} row(s) with errors will be skipped. Fix them in your file and re-import to include them.</p>` : ""}
+      </section>
+    </div>`;
+  return renderPage(ctx, { title: "Review import", body, active: "roster" });
+}
+
+// small view helpers
+const kpi = (label, val) => html`<div class="kpi"><div class="lbl">${label}</div><div class="val">${val}</div></div>`;
+const kpiC = (label, val, tone) => html`<div class="kpi"><div class="lbl">${label}</div><div class="val ${tone}">${val}</div></div>`;
+const statusPill = (st) => {
+  const s = String(st || "").toLowerCase();
+  if (s === "active") return raw('<span class="pill ok2">Active</span>');
+  if (s === "inactive") return raw('<span class="pill off">Inactive</span>');
+  if (s === "leave") return raw('<span class="pill warn2">On leave</span>');
+  return st || "—";
+};
+const escHtml = (s) => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+const escAttr = (s) => escHtml(s).replaceAll('"', "&quot;");

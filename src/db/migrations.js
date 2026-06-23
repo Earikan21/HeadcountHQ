@@ -87,4 +87,61 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_19_002_roster",
+    up(db) {
+      db.exec(`
+        CREATE TABLE levels (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id INTEGER NOT NULL DEFAULT 1,
+          name         TEXT NOT NULL,
+          rank         INTEGER,
+          band_min     REAL,
+          band_max     REAL
+        );
+
+        CREATE TABLE employees (
+          id                INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id      INTEGER NOT NULL DEFAULT 1,
+          employee_ext_id   TEXT NOT NULL,
+          name              TEXT NOT NULL,
+          department_id     INTEGER REFERENCES departments(id),
+          job_title         TEXT,
+          manager           TEXT,
+          employee_type     TEXT,
+          employment_status TEXT,
+          level_id          INTEGER REFERENCES levels(id),
+          created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE UNIQUE INDEX idx_emp_ext ON employees(workspace_id, employee_ext_id);
+
+        -- Sensitive compensation is split into its own table so the authz layer
+        -- can withhold it cleanly from roles that may not see exact figures.
+        CREATE TABLE compensation (
+          employee_id   INTEGER PRIMARY KEY REFERENCES employees(id) ON DELETE CASCADE,
+          amount        REAL,
+          unit          TEXT,
+          annual_salary REAL
+        );
+
+        CREATE TABLE import_batches (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id INTEGER NOT NULL DEFAULT 1,
+          filename     TEXT,
+          status       TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','committed','discarded')),
+          headers      TEXT,
+          raw_rows     TEXT,
+          mapping      TEXT,
+          assumptions  TEXT,
+          row_count    INTEGER DEFAULT 0,
+          clean_count  INTEGER DEFAULT 0,
+          created_by   INTEGER,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          committed_at TEXT
+        );
+        CREATE INDEX idx_emp_dept ON employees(department_id);
+      `);
+    },
+  },
 ];

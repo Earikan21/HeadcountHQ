@@ -66,3 +66,27 @@ input[type=radio]{width:auto;margin:0 8px 0 0}
 body.auth{background:var(--bg)}
 .authwrap{max-width:420px;margin:8vh auto;padding:0 20px}
 .card.auth h1{font-size:20px;margin:0 0 14px}
+
+/* ---- M2 roster & import ---- */
+.row-between{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.val.good{color:var(--green)}.val.bad{color:var(--red)}.val.warn{color:var(--amber)}
+.wsteps{display:flex;align-items:center;gap:8px;margin-bottom:18px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.wstep{display:flex;align-items:center;gap:7px;font-weight:600}
+.wstep b{display:inline-flex;width:21px;height:21px;border-radius:50%;background:#eef1f7;align-items:center;justify-content:center;font-size:11px}
+.wstep.on{color:var(--ink)}.wstep.on b{background:var(--brand);color:#fff}
+.warr{color:#cbd5e1}
+.map-head{display:grid;grid-template-columns:1fr 1.3fr 120px;gap:12px;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.map-row{display:grid;grid-template-columns:1fr 1.3fr 120px;gap:12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.map-row:last-of-type{border-bottom:none}
+.map-row select{margin-top:0}
+.canon{font-weight:700;font-size:13.5px}.canon .req{color:var(--red)}
+.badge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;text-align:center;display:inline-block}
+.b-high{background:var(--green-soft);color:#047857}.b-low{background:var(--amber-soft);color:#b45309}.b-none{background:var(--red-soft);color:#b91c1c}
+.flag{padding:9px 12px;border-radius:9px;margin-bottom:8px;font-size:12.5px}
+.flag.e{background:var(--red-soft);color:#991b1b}.flag.w{background:var(--amber-soft);color:#92400e}.flag.g{background:var(--green-soft);color:#065f46}
+.tbl-scroll{overflow:auto;max-height:460px}
+.cell-err{background:var(--red-soft);color:#991b1b;font-weight:600}
+tr.rowerr{background:#fef7f7}
+.pill.ok2{background:var(--green-soft);color:#047857}
+.pill.warn2{background:var(--amber-soft);color:#b45309}

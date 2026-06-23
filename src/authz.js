@@ -29,6 +29,8 @@ export const canApproveRequests = (u) => isRole(u, "finance_admin", "c_suite");
 export const canCreateRequest = (u) => isRole(u, "finance_admin", "manager");
 export const canRunScenarios = (u) => isRole(u, "finance_admin", "c_suite");
 export const canViewAudit = (u) => isRole(u, "finance_admin");
+/** Who may see aggregate compensation totals (managers see headcount only). */
+export const canViewCompTotals = (u) => isRole(u, "finance_admin", "c_suite");
 
 /** 'exact' | 'bands' — how much compensation detail this user may see. */
 export function compVisibility(user) {

@@ -6,6 +6,7 @@ import { registerHomeRoutes } from "./routes/home.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerDepartmentRoutes } from "./routes/departments.js";
+import { registerRosterRoutes } from "./routes/roster.js";
 
 export function registerRoutes(router, _deps) {
   router.get("/health", (ctx) => ctx.send(200, "text/plain; charset=utf-8", "Server healthy"));
@@ -15,4 +16,5 @@ export function registerRoutes(router, _deps) {
   registerAuthRoutes(router);
   registerAccountRoutes(router);
   registerDepartmentRoutes(router);
+  registerRosterRoutes(router);
 }
