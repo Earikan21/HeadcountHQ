@@ -144,4 +144,10 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_19_003_import_header_row",
+    up(db) {
+      db.exec(`ALTER TABLE import_batches ADD COLUMN header_row INTEGER NOT NULL DEFAULT 0;`);
+    },
+  },
 ];

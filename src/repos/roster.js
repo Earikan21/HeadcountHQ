@@ -1,26 +1,35 @@
 /** Data access for roster import batches, departments-by-name, and employees. */
 import { getDepartment } from "./departments.js";
+import { matrixToRows } from "../domain/csv.js";
 
 // ---- import batches ----
-export function createBatch(db, { filename, headers, rawRows, mapping, createdBy }) {
+export function createBatch(db, { filename, matrix, headerRow, mapping, createdBy }) {
   const info = db.prepare(
-    `INSERT INTO import_batches (filename, status, headers, raw_rows, mapping, row_count, created_by)
+    `INSERT INTO import_batches (filename, status, raw_rows, mapping, header_row, row_count, created_by)
      VALUES (?, 'draft', ?, ?, ?, ?, ?)`
-  ).run(filename, JSON.stringify(headers), JSON.stringify(rawRows), JSON.stringify(mapping), rawRows.length, createdBy);
+  ).run(filename, JSON.stringify(matrix), JSON.stringify(mapping), headerRow, Math.max(0, matrix.length - headerRow - 1), createdBy);
   return getBatch(db, info.lastInsertRowid);
 }
 
 export function getBatch(db, id) {
   const b = db.prepare("SELECT * FROM import_batches WHERE id = ?").get(id);
   if (!b) return null;
+  const matrix = JSON.parse(b.raw_rows || "[]");
+  const headerRow = b.header_row || 0;
+  const { headers, rows } = matrixToRows(matrix, headerRow);
   return {
     ...b,
-    headers: JSON.parse(b.headers || "[]"),
-    rawRows: JSON.parse(b.raw_rows || "[]"),
+    matrix,
+    headerRow,
+    headers,
+    rawRows: rows,
     mapping: JSON.parse(b.mapping || "{}"),
     assumptions: b.assumptions ? JSON.parse(b.assumptions) : null,
   };
 }
+
+export const setBatchHeaderRow = (db, id, headerRow, rowCount) =>
+  db.prepare("UPDATE import_batches SET header_row = ?, row_count = ? WHERE id = ?").run(headerRow, rowCount, id);
 
 export const updateBatchMapping = (db, id, mapping) =>
   db.prepare("UPDATE import_batches SET mapping = ? WHERE id = ?").run(JSON.stringify(mapping), id);

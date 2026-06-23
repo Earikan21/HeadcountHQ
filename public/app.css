@@ -90,3 +90,9 @@ body.auth{background:var(--bg)}
 tr.rowerr{background:#fef7f7}
 .pill.ok2{background:var(--green-soft);color:#047857}
 .pill.warn2{background:var(--amber-soft);color:#b45309}
+
+.hdrpick{background:#f8faff;border:1px solid #dce6fb;border-radius:10px;padding:12px 14px;margin-bottom:14px}
+.hdrpick label{margin-bottom:6px}
+.hdrpick-row{display:flex;gap:8px;align-items:center}
+.hdrpick-row select{margin-top:0}
+.hdrpick .small{margin:8px 0 0}

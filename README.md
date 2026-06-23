@@ -5,13 +5,11 @@ model across departments and the C-suite. It connects current roster and
 compensation to structured hiring requests, reconciled against budget and runway,
 with role-based access and compensation confidentiality enforced on the server.
 
-> **Status: M2 — roster & guided import (complete, tested).** On top of M1's
-> auth/accounts/roles, the app now imports an existing roster from CSV through a
-> guided wizard (upload → auto-map columns → validate → review → import),
-> normalizes and de-duplicates the data, stores compensation in a separate table,
-> and shows the roster with compensation visibility enforced per role (exact for
-> Finance Admin, bands for everyone else; managers see only their own department).
-> Hiring requests, dashboards, and the planning engine are next. See
+> **Status: M1 — authentication & accounts (complete, tested).** The app has
+> secure sign-in, an admin who manages accounts, the three roles
+> (Finance Admin / C-Suite / Manager) with server-enforced compensation
+> visibility, invite links, and an audit log. Roster import, hiring requests,
+> dashboards, and the planning engine are the next milestones. See
 > [`docs/ARCHITECTURE_PLAN.md`](docs/ARCHITECTURE_PLAN.md).
 
 ## First run

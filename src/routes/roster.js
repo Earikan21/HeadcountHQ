@@ -2,11 +2,11 @@ import { html, raw } from "../html.js";
 import { renderPage, csrfField, errorList, money } from "../views/ui.js";
 import { requireAuth, requirePermission } from "../middleware.js";
 import { canImportRoster, compVisibility, canViewCompTotals, departmentScope } from "../authz.js";
-import { parseCsv, toCsv } from "../domain/csv.js";
+import { parseMatrix, detectHeaderRow, matrixToRows, toCsv } from "../domain/csv.js";
 import * as R from "../domain/roster.js";
 import { logAudit } from "../repos/audit.js";
 import {
-  createBatch, getBatch, updateBatchMapping, setBatchStatus, listBatches,
+  createBatch, getBatch, updateBatchMapping, setBatchHeaderRow, setBatchStatus, listBatches,
   upsertDepartmentByName, upsertEmployee, listEmployees,
 } from "../repos/roster.js";
 
@@ -48,13 +48,15 @@ export function registerRosterRoutes(router) {
     if (!file || !file.data || !file.data.length) {
       return ctx.html(400, uploadPage(ctx, { errors: ["Please choose a CSV file to upload."] }));
     }
-    const { headers, rows } = parseCsv(file.data.toString("utf8"));
-    if (!headers.length || !rows.length) {
+    const matrix = parseMatrix(file.data.toString("utf8"));
+    if (matrix.length < 2) {
       return ctx.html(400, uploadPage(ctx, { errors: ["That file has no readable rows. Export your roster as CSV and try again."] }));
     }
+    const headerRow = detectHeaderRow(matrix);
+    const { headers } = matrixToRows(matrix, headerRow);
     const { mapping } = R.autoMap(headers);
-    const batch = createBatch(ctx.db, { filename: file.filename, headers, rawRows: rows, mapping, createdBy: ctx.user.id });
-    logAudit(ctx.db, { userId: ctx.user.id, action: "import.uploaded", entity: "import_batch", entityId: batch.id, detail: { filename: file.filename, rows: rows.length } });
+    const batch = createBatch(ctx.db, { filename: file.filename, matrix, headerRow, mapping, createdBy: ctx.user.id });
+    logAudit(ctx.db, { userId: ctx.user.id, action: "import.uploaded", entity: "import_batch", entityId: batch.id, detail: { filename: file.filename, rows: batch.row_count } });
     ctx.redirect(`/roster/import/${batch.id}/map`);
   });
 
@@ -81,6 +83,19 @@ export function registerRosterRoutes(router) {
     }
     updateBatchMapping(ctx.db, batch.id, mapping);
     ctx.redirect(`/roster/import/${batch.id}/review`);
+  });
+
+  // ---- Change which row holds the column headers (re-runs auto-map) ----
+  router.post("/roster/import/:id/header", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    let hr = Number(ctx.body.header_row);
+    if (!Number.isInteger(hr) || hr < 0 || hr >= batch.matrix.length) hr = 0;
+    const { headers, rows } = matrixToRows(batch.matrix, hr);
+    setBatchHeaderRow(ctx.db, batch.id, hr, rows.length);
+    updateBatchMapping(ctx.db, batch.id, R.autoMap(headers).mapping);
+    ctx.redirect(`/roster/import/${batch.id}/map`);
   });
 
   // ---- Step 3: review ----
@@ -214,6 +229,26 @@ function uploadPage(ctx, { errors }) {
   return renderPage(ctx, { title: "Import roster", body, active: "roster" });
 }
 
+function headerRowPicker(ctx, batch) {
+  const candidates = batch.matrix.slice(0, 8);
+  if (candidates.length < 2) return "";
+  const preview = (row) => {
+    const cells = row.map((c) => String(c).trim()).filter(Boolean).slice(0, 5).join(" | ");
+    return cells.length > 70 ? cells.slice(0, 70) + "…" : (cells || "(blank row)");
+  };
+  const options = candidates.map((row, i) =>
+    html`<option value="${i}" ${i === batch.headerRow ? raw("selected") : ""}>Row ${i + 1}: ${preview(row)}</option>`);
+  return html`<form method="post" action="/roster/import/${batch.id}/header" class="hdrpick">
+      ${csrfField(ctx)}
+      <label>Which row has your column headers?</label>
+      <div class="hdrpick-row">
+        <select name="header_row">${options}</select>
+        <button class="btn sm ghost" type="submit">Use this row</button>
+      </div>
+      <p class="muted small">If your file starts with a title row, pick the row that holds the real column names, then "Use this row".</p>
+    </form>`;
+}
+
 function mapPage(ctx, { batch, errors }) {
   const { confidence } = R.autoMap(batch.headers);
   const opts = (sel) => raw(['<option value="">— not mapped —</option>']
@@ -235,6 +270,7 @@ function mapPage(ctx, { batch, errors }) {
     ${wizardSteps("map")}
     ${errorList(errors)}
     <section class="card">
+      ${headerRowPicker(ctx, batch)}
       <div class="flash">We matched your file's columns to our standard fields. Confirm or fix each one. <b>*</b> required.</div>
       <form method="post" action="/roster/import/${batch.id}/map">
         ${csrfField(ctx)}
