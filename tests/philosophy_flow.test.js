@@ -107,3 +107,21 @@ test("only Finance Admin can reach the philosophy hub", async () => {
   assert.equal((await exec.get("/philosophy")).status, 403);
   await srv.close();
 });
+
+test("Suggest button redirects 303 (no header crash) and seeds targets", async () => {
+  const { srv, c } = await freshAdmin();
+  await importRoster(c);
+  const r = await c.post("/philosophy/targets/suggest", {});
+  assert.equal(r.status, 303, "suggest must redirect, not 500");
+  assert.match(r.headers.get("location"), /\/philosophy/);
+  const n = srv.db.prepare("SELECT COUNT(*) AS n FROM target_ratios WHERE family='department_mix'").get().n;
+  assert.ok(n >= 2);
+  await srv.close();
+});
+
+test("Suggest with no departments yet does not crash", async () => {
+  const { srv, c } = await freshAdmin();
+  const r = await c.post("/philosophy/targets/suggest", {});
+  assert.equal(r.status, 303);
+  await srv.close();
+});

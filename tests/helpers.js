@@ -77,7 +77,10 @@ export function makeClient(base) {
   async function post(path, data = {}) {
     const form = new URLSearchParams();
     if (!("_csrf" in data) && jar.hq_csrf) form.set("_csrf", jar.hq_csrf);
-    for (const [k, v] of Object.entries(data)) form.set(k, v);
+    for (const [k, v] of Object.entries(data)) {
+      if (Array.isArray(v)) v.forEach((x) => form.append(k, x));
+      else form.set(k, v);
+    }
     const bodyStr = form.toString();
     return request("POST", path, {
       headers: {

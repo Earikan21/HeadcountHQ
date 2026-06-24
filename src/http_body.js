@@ -18,10 +18,13 @@ export async function parseBody(req, ctx, maxBytes) {
     if (m) parseMultipart(raw, m[2], ctx);
     return;
   }
-  // default: urlencoded
+  // default: urlencoded. Repeated keys (e.g. checkboxes) become arrays.
   const params = new URLSearchParams(raw.toString("utf8"));
   const body = {};
-  for (const [k, v] of params) body[k] = v;
+  for (const k of new Set(params.keys())) {
+    const all = params.getAll(k);
+    body[k] = all.length > 1 ? all : all[0];
+  }
   ctx.body = body;
 }
 

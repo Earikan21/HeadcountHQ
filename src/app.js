@@ -102,7 +102,9 @@ function makeContext(req, res, { config, db }) {
     json(status, obj) { ctx.send(status, "application/json; charset=utf-8", JSON.stringify(obj)); },
     redirect(location, status = 303) {
       ctx._flush();
-      res.writeHead(status, { Location: location });
+      // encodeURI keeps URL structure but escapes stray non-ASCII (e.g. an em dash
+      // in a flash message), which would otherwise be an illegal header value.
+      res.writeHead(status, { Location: encodeURI(location) });
       res.end();
     },
     attachment(filename, type, bodyStr) {

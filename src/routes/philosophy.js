@@ -59,7 +59,7 @@ export function registerPhilosophyRoutes(router) {
     const names = listDepartments(ctx.db).map((d) => d.name);
     const sug = P.suggestDepartmentTargets(names);
     saveDepartmentTargets(ctx.db, sug, "default", ctx.user.id);
-    ctx.redirect("/philosophy?msg=Suggested+balance+applied+—+now+edit+freely");
+    ctx.redirect("/philosophy?msg=Suggested+balance+applied+-+now+edit+freely");
   });
 }
 
@@ -168,9 +168,9 @@ function page(ctx) {
         <div><h2>Target balance (you control this directly)</h2>
           <p class="muted small">Each department's intended share of headcount. Edit any value; "Suggest a starting balance" seeds research-based defaults you can then override. Targets sum: <b>${Math.round(targetSum * 10) / 10}%</b>.</p>
         </div>
-        <form method="post" action="/philosophy/targets/suggest" class="inline">
+        ${depts.length ? html`<form method="post" action="/philosophy/targets/suggest" class="inline">
           ${csrfField(ctx)}<button class="btn ghost sm" type="submit">Suggest a starting balance</button>
-        </form>
+        </form>` : ""}
       </div>
       <form method="post" action="/philosophy/targets">
         ${csrfField(ctx)}
