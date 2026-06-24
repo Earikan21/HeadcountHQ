@@ -274,4 +274,13 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_24_007_company_budget",
+    up(db) {
+      db.exec(`
+        ALTER TABLE workspace_settings ADD COLUMN company_headcount_budget INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE workspace_settings ADD COLUMN company_money_budget     REAL    NOT NULL DEFAULT 0;
+      `);
+    },
+  },
 ];

@@ -111,3 +111,7 @@ textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 1
 .ubar i.ok{background:var(--green)} .ubar i.warn{background:var(--amber)} .ubar i.over{background:var(--red)}
 .tcell.wide{width:120px}
 fieldset.radios legend{padding:0}
+
+.over-txt{color:var(--red);font-weight:700}
+.ok-txt{color:var(--green);font-weight:600}
+.totrow td{border-top:2px solid var(--line);font-size:13px}
