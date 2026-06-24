@@ -15,9 +15,11 @@ export function registerHomeRoutes(router) {
 
     const tiles = [
       tile("Roster", "Import and review your current people & compensation.", "/roster"),
+      tile("Headcount", "Approved vs. active seats by department.", "/headcount"),
       tile("Hiring requests", "Submit and track structured requests for new roles.", "/requests"),
     ];
     if (ctx.user.role !== "manager") tiles.push(tile("Planning", "Budgets, scenarios, and runway.", "/planning"));
+    if (isAdmin) tiles.push(tile("Philosophy settings", "Set the rules: seats vs. people, backfill, phase.", "/settings"));
     if (isAdmin) tiles.push(tile("Accounts", "Manage who can sign in.", "/accounts"));
 
     const body = html`

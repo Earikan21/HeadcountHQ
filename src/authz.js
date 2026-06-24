@@ -23,6 +23,8 @@ export function isRole(user, ...roles) {
 /** Account/workspace administration is the Finance Admin's alone. */
 export const canManageAccounts = (u) => isRole(u, "finance_admin");
 export const canManageDepartments = (u) => isRole(u, "finance_admin");
+export const canManageSettings = (u) => isRole(u, "finance_admin");
+export const canManageSeats = (u) => isRole(u, "finance_admin");
 export const canImportRoster = (u) => isRole(u, "finance_admin");
 export const canSetBudgets = (u) => isRole(u, "finance_admin", "c_suite");
 export const canApproveRequests = (u) => isRole(u, "finance_admin", "c_suite");

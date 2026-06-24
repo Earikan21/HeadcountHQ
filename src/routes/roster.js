@@ -9,6 +9,7 @@ import {
   createBatch, getBatch, updateBatchMapping, setBatchHeaderRow, setBatchStatus, listBatches,
   upsertDepartmentByName, upsertEmployee, listEmployees,
 } from "../repos/roster.js";
+import { ensureSeatForEmployee } from "../repos/seats.js";
 
 const compCell = (user, annual) => {
   if (annual == null) return "—";
@@ -117,7 +118,8 @@ export function registerRosterRoutes(router) {
     for (const row of built.rows) {
       if (!row._ok) continue;
       const deptId = upsertDepartmentByName(ctx.db, row.department);
-      upsertEmployee(ctx.db, row, deptId);
+      const empId = upsertEmployee(ctx.db, row, deptId);
+      if (row._status !== "inactive") ensureSeatForEmployee(ctx.db, { employeeId: empId, departmentId: deptId, title: row.job_title });
       committed++;
     }
     setBatchStatus(ctx.db, batch.id, "committed", committed);

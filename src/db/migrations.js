@@ -150,4 +150,41 @@ export const MIGRATIONS = [
       db.exec(`ALTER TABLE import_batches ADD COLUMN header_row INTEGER NOT NULL DEFAULT 0;`);
     },
   },
+  {
+    name: "2026_06_24_004_seats",
+    up(db) {
+      db.exec(`
+        CREATE TABLE workspace_settings (
+          workspace_id    INTEGER PRIMARY KEY DEFAULT 1,
+          seat_mode       TEXT NOT NULL DEFAULT 'seat'   CHECK (seat_mode IN ('seat','person')),
+          backfill_policy TEXT NOT NULL DEFAULT 'auto'   CHECK (backfill_policy IN ('auto','reapprove')),
+          company_phase   TEXT NOT NULL DEFAULT 'early'  CHECK (company_phase IN ('early','growth','mid','scale')),
+          industry        TEXT NOT NULL DEFAULT '',
+          updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_by      INTEGER
+        );
+        INSERT INTO workspace_settings (workspace_id) VALUES (1);
+
+        CREATE TABLE seats (
+          id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id         INTEGER NOT NULL DEFAULT 1,
+          department_id        INTEGER REFERENCES departments(id),
+          level_id             INTEGER REFERENCES levels(id),
+          title                TEXT,
+          status               TEXT NOT NULL DEFAULT 'proposed'
+                                 CHECK (status IN ('proposed','approved','open','filled','frozen','closed')),
+          occupant_employee_id INTEGER REFERENCES employees(id),
+          loaded_cost_estimate REAL,
+          source_request_id    INTEGER,
+          opened_at            TEXT,
+          created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_seats_dept ON seats(department_id);
+        CREATE INDEX idx_seats_status ON seats(status);
+
+        ALTER TABLE employees ADD COLUMN seat_id INTEGER REFERENCES seats(id);
+      `);
+    },
+  },
 ];
