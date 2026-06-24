@@ -285,9 +285,9 @@ function mapPage(ctx, { batch, errors }) {
         ${rows}
         <div class="actions" style="margin-top:16px">
           <button class="btn" type="submit">Continue to review</button>
-          <form method="post" action="/roster/import/${batch.id}/discard" class="inline">${csrfField(ctx)}<button class="linklike" type="submit">Discard</button></form>
         </div>
       </form>
+      <form method="post" action="/roster/import/${batch.id}/discard" class="inline" style="margin-top:8px">${csrfField(ctx)}<button class="linklike" type="submit">Discard import</button></form>
     </section>`;
   return renderPage(ctx, { title: "Map columns", body, active: "roster" });
 }

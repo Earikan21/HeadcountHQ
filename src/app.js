@@ -55,7 +55,7 @@ export function buildApp({ config, db }) {
 
       if (req.method === "POST") {
         await parseBody(req, ctx, MAX_BODY);
-        if (!csrfOk(ctx)) return ctx.send(403, "text/plain; charset=utf-8", "Invalid CSRF token");
+        if (!csrfOk(ctx)) return ctx.send(403, "text/html; charset=utf-8", csrfErrorPage());
       }
 
       ctx.params = matched.params;
@@ -119,15 +119,19 @@ function makeContext(req, res, { config, db }) {
   return ctx;
 }
 
+const CSRF_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 function ensureCsrfCookie(ctx) {
   if (!ctx.csrf) {
     ctx.csrf = randomBytes(24).toString("hex");
-    ctx.setCookie(CSRF_COOKIE, ctx.csrf);
+    // Persistent (not a session cookie): survives browser restarts and long-open
+    // form pages, which avoids spurious "Invalid CSRF token" failures.
+    ctx.setCookie(CSRF_COOKIE, ctx.csrf, { maxAge: CSRF_MAX_AGE });
   }
 }
 
 function csrfOk(ctx) {
-  const sent = String(ctx.body._csrf || "");
+  const rawCsrf = ctx.body._csrf;
+  const sent = String((Array.isArray(rawCsrf) ? rawCsrf[0] : rawCsrf) || "");
   const cookie = String(ctx.csrf || "");
   if (!sent || !cookie || sent.length !== cookie.length) return false;
   try {
@@ -195,6 +199,17 @@ function send(res, status, type, body) {
 }
 function notFoundPage() {
   return "<!doctype html><meta charset=utf-8><title>Not found</title><p style='font-family:sans-serif;padding:40px'>Page not found. <a href='/'>Home</a></p>";
+}
+function csrfErrorPage() {
+  return `<!doctype html><meta charset=utf-8><title>Session expired</title>
+<div style="font-family:system-ui,sans-serif;max-width:560px;margin:12vh auto;padding:0 20px">
+<h1 style="font-size:20px">Your page expired</h1>
+<p>For your security, this form's token didn't match. This usually means the page sat open
+too long, or cookies are being blocked.</p>
+<p><b>Go back, reload the page, and submit again.</b></p>
+<p style="color:#64748b;font-size:13px">Running it yourself over http://localhost? Set
+<code>COOKIE_SECURE=false</code> in your <code>.env</code> — Secure cookies are dropped on non-HTTPS.</p>
+<p><a href="/">Back to Headcount HQ</a></p></div>`;
 }
 function errorPage() {
   return "<!doctype html><meta charset=utf-8><title>Error</title><p style='font-family:sans-serif;padding:40px'>Something went wrong. Please try again.</p>";
