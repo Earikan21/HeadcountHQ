@@ -115,3 +115,8 @@ fieldset.radios legend{padding:0}
 .over-txt{color:var(--red);font-weight:700}
 .ok-txt{color:var(--green);font-weight:600}
 .totrow td{border-top:2px solid var(--line);font-size:13px}
+
+.wtabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.wtab{padding:9px 16px;font-weight:700;font-size:13.5px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
+.wtab:hover{color:var(--ink)}
+.wtab.on{color:var(--brand);border-bottom-color:var(--brand)}

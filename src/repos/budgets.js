@@ -18,11 +18,35 @@ export function setCompanyBudget(db, headcount, money, userId) {
   db.prepare("UPDATE workspace_settings SET company_headcount_budget=?, company_money_budget=?, updated_by=?, updated_at=datetime('now') WHERE workspace_id=1")
     .run(Math.max(0, Math.round(Number(headcount) || 0)), Math.max(0, Number(money) || 0), userId);
 }
+export function setCompanyHeadcount(db, headcount, userId) {
+  db.prepare("UPDATE workspace_settings SET company_headcount_budget=?, updated_by=?, updated_at=datetime('now') WHERE workspace_id=1")
+    .run(Math.max(0, Math.round(Number(headcount) || 0)), userId);
+}
+export function setCompanyMoney(db, money, userId) {
+  db.prepare("UPDATE workspace_settings SET company_money_budget=?, updated_by=?, updated_at=datetime('now') WHERE workspace_id=1")
+    .run(Math.max(0, Number(money) || 0), userId);
+}
 
 export const getEnvelope = (db, deptId) =>
   db.prepare("SELECT * FROM budget_envelopes WHERE department_id=? AND period='current'").get(deptId)
   || { department_id: deptId, headcount_budget: 0, money_budget: 0 };
 
+export function setEnvelopeHeadcount(db, deptId, headcount, userId) {
+  db.prepare(
+    `INSERT INTO budget_envelopes (department_id, period, headcount_budget, money_budget, set_by)
+     VALUES (?, 'current', ?, 0, ?)
+     ON CONFLICT(workspace_id, department_id, period)
+       DO UPDATE SET headcount_budget=excluded.headcount_budget, set_by=excluded.set_by, updated_at=datetime('now')`
+  ).run(deptId, Math.max(0, Math.round(Number(headcount) || 0)), userId);
+}
+export function setEnvelopeMoney(db, deptId, money, userId) {
+  db.prepare(
+    `INSERT INTO budget_envelopes (department_id, period, headcount_budget, money_budget, set_by)
+     VALUES (?, 'current', 0, ?, ?)
+     ON CONFLICT(workspace_id, department_id, period)
+       DO UPDATE SET money_budget=excluded.money_budget, set_by=excluded.set_by, updated_at=datetime('now')`
+  ).run(deptId, Math.max(0, Number(money) || 0), userId);
+}
 export function setEnvelope(db, deptId, headcount, money, userId) {
   db.prepare(
     `INSERT INTO budget_envelopes (department_id, period, headcount_budget, money_budget, set_by)
@@ -56,7 +80,8 @@ export function departmentReconciliation(db, deptId) {
  */
 export function allReconciliation(db) {
   const depts = db.prepare("SELECT id, name FROM departments ORDER BY name").all();
-  const rows = depts.map((d) => ({ id: d.id, name: d.name, ...departmentReconciliation(db, d.id) }));
+  const empCount = db.prepare("SELECT COUNT(*) AS n FROM employees WHERE department_id=?");
+  const rows = depts.map((d) => ({ id: d.id, name: d.name, currentEmployees: empCount.get(d.id).n, ...departmentReconciliation(db, d.id) }));
   const sum = (sel) => rows.reduce((a, r) => a + sel(r), 0);
   const cap = getCompanyBudget(db);
 
@@ -78,5 +103,6 @@ export function allReconciliation(db) {
     pendingMoney: sum((r) => r.money.pending),
   });
 
-  return { rows, allocation, company };
+  const currentEmployees = db.prepare("SELECT COUNT(*) AS n FROM employees").get().n;
+  return { rows, allocation, company, currentEmployees };
 }
