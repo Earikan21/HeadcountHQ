@@ -76,7 +76,7 @@ export function registerRosterRoutes(router) {
       const v = ctx.body[`map_${f.key}`] || "";
       mapping[f.key] = v && batch.headers.includes(v) ? v : null;
     }
-    const missing = R.SCHEMA.filter((f) => f.required && !mapping[f.key]).map((f) => f.label);
+    const missing = R.mappingProblems(mapping);
     if (missing.length) {
       batch.mapping = mapping;
       return ctx.html(400, mapPage(ctx, { batch, errors: ["Map required fields: " + missing.join(", ")] }));
@@ -271,7 +271,7 @@ function mapPage(ctx, { batch, errors }) {
     ${errorList(errors)}
     <section class="card">
       ${headerRowPicker(ctx, batch)}
-      <div class="flash">We matched your file's columns to our standard fields. Confirm or fix each one. <b>*</b> required.</div>
+      <div class="flash">We matched your file's columns to our standard fields. Confirm or fix each one. <b>*</b> required. For names, map a single <b>Full name</b> column <i>or</i> <b>First name</b> / <b>Last name</b> — whichever your file has.</div>
       <form method="post" action="/roster/import/${batch.id}/map">
         ${csrfField(ctx)}
         <div class="map-head"><span>Standard field</span><span>Your column</span><span></span></div>

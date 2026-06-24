@@ -13,6 +13,23 @@
 > (node:crypto) rather than Argon2, and persistence uses node:sqlite behind a small
 > storage module so it can be swapped later.
 
+> **UPDATE (2026-06-24) — philosophy layer added (Mike Sabes interview).**
+> A discovery interview surfaced a foundational reframing: the tool must let an org
+> set its **headcount philosophy before it models anything.** Modeling is no longer the
+> entry point — configuration is. This update adds a new **Philosophy / Settings**
+> domain that sits upstream of import, roster, requests, and roll-ups, and four new
+> capability areas: a **seat model** (a seat is a thing distinct from the person in it),
+> a **benchmark / target-ratio engine**, an **incremental-hiring value** module, and a
+> **"Position Economy"** budget framing. See the new **§12** for the full design; the
+> sections below are annotated where they change. Decisions locked in this interview:
+>
+> | Decision | Choice |
+> |---|---|
+> | Seat vs. person (what an approval grants) | **Configurable per workspace** — seats are *always* modeled; only the vacancy transition is gated by the setting (one code path, not two) |
+> | Backfill on vacancy | **Configurable** — default auto-backfill, admins can switch to "return seat to budget pool, require re-approval" |
+> | Benchmarks | **Framework + seeded research** — admin-editable target engine now, plus a starter benchmark dataset produced by deep research, clearly marked as overridable starter data |
+> | Position Economy | **Envelopes + framing** — keep per-department budget envelopes and org-hierarchy roll-ups, present them through the "positions trickle down from Finance" lens; full cascading-allocation engine deferred |
+
 ## 0. Decisions already locked
 
 From the planning conversation:
@@ -143,6 +160,13 @@ mutable records for audit.
   hygiene; cheap to include from day one)
 - **import_batches** — provenance of each import (file name, mapping used, counts) so
   imports are re-runnable and traceable
+
+> **Added 2026-06-24 (see §12 for detail):** `workspace_settings` (philosophy:
+> seat_mode, backfill_policy, company_phase), `seats` (the persistent position,
+> occupant nullable), `benchmarks` (researched reference ratios), `target_ratios`
+> (admin-modulated per-phase targets, incl. level-mix), and new value/justification
+> fields on `hiring_requests`. Note: `hiring_requests` becomes a *request to open or
+> change a **seat***, not a request to hire a person directly.
 
 ---
 
@@ -314,6 +338,10 @@ headcount-hq/
 
 ## 10. Proposed build sequence (gated on your approval)
 
+> **Superseded by §13 (Directive 2.0, 2026-06-24).** The list below is the original
+> sequence; the current plan inserts **M2.5 (philosophy & seats)** before requests and
+> adds **M4.5 (benchmark seed)**. See §12–§13 for the authoritative roadmap.
+
 Each milestone ends green (tests passing) and is a natural review checkpoint per your
 workflow (Architecture → Code → Tests → Performance).
 
@@ -346,3 +374,180 @@ of it before you see anything.
 3. Confirm you're happy for me to **begin at M0** and pause for review between milestones.
 
 Nothing gets built until you say go.
+
+---
+
+## 12. Philosophy layer (2026-06-24 — Mike Sabes interview)
+
+The core insight from the interview: **the tool must not jump straight into modeling.**
+It first establishes the *rules of the game* — what an approval means, whether seats
+backfill, what "right-sized" looks like for each department, and where the company is
+in its lifecycle. Everything downstream (requests, roll-ups, ROI, board views) reads
+from this layer. Architecturally it is a new pure-domain area (`domain/philosophy`)
+plus a `workspace_settings` record and the supporting tables below; it changes no
+existing security model.
+
+### 12.1 Seats — the unit of approval
+
+Today the model has people (`employees`) and will have `hiring_requests`. Mike's
+question — *"is approving a headcount approving a single employee or approving a
+seat?"* — forces a new entity in between: a **seat** is a budgeted, approved position
+that exists independently of whoever occupies it.
+
+- **`seats`**: id, workspace_id, department_id, level_id, title, status
+  (`proposed` → `approved` → `open` → `filled` → `frozen` → `closed`), occupant
+  `employee_id` (nullable), `opened_at`, fully-loaded-cost estimate, source request id.
+- An employee now **occupies a seat** (`employees.seat_id`), rather than standing alone.
+- **Active vs. approved** — the number Mike asked for — becomes trivial and exact:
+  `approved` = count of non-closed seats; `active` = count of `filled` seats; the ratio
+  is per-department and company-wide, no heuristics.
+
+**Configurable, one code path.** Seats are *always* modeled. The workspace setting
+`seat_mode` only governs the **vacancy transition**:
+
+- `seat` mode — occupant leaves → seat returns to `open` (persists, ready to backfill).
+- `person` mode — occupant leaves → seat goes `closed` (the headcount dissolves;
+  re-staffing needs a fresh request).
+
+This keeps us DRY: there is a single seat lifecycle; the setting picks one branch of one
+transition. It also satisfies the CLAUDE.md "explicit over clever" and "no duplication"
+principles — no parallel person-vs-seat subsystems.
+
+**Backfill policy** is a second setting, `backfill_policy`:
+- `auto` (default) — a vacated seat in `seat` mode auto-moves to `open` (an open req).
+- `reapprove` — a vacated seat parks in a `frozen`/budget-pool state and requires
+  re-approval before it can be filled, giving leadership a budget-discipline lever.
+
+Every transition is written to `request_status_history` / `audit_log` so the
+"who approved this seat and when" trail is intact.
+
+### 12.2 Benchmark & target-ratio engine
+
+Mike wants departments compared to benchmarks, with leadership able to **modulate**
+benchmarks into editable **targets** that shift by company **phase**.
+
+- **`benchmarks`** (reference data): metric (`dept_share_of_headcount`,
+  `manager_to_ic_ratio`, `admin_share`, `csuite_share`, …), **industry**, **phase**,
+  value, sample basis, source, retrieved_at. Seeded by deep research (see §13), marked
+  `is_seed`.
+- **`target_ratios`** (the org's own, editable): workspace_id, metric, scope
+  (department_id or level), phase, target_value, set_by, updated_at. Seeded *from*
+  benchmarks but owned and overridable by Finance Admin / C-suite.
+- **`workspace_settings.company_phase`** (`early`, `growth`, `mid`, `scale`) selects
+  which target set is active, so the same workspace re-baselines as it matures.
+- **`workspace_settings.industry`** selects which benchmark set seeds the targets.
+- **Two target families**, exactly as Mike listed: (1) **department mix** — each
+  department's share of total headcount vs. target; (2) **employment-level mix** —
+  Admin / Manager / C-suite / IC proportions vs. target.
+- **Output**: a "ratios vs. target" panel per department and company-wide, flagging
+  over/under-staffed areas. This is pure roll-up math over seats + levels; no new
+  security surface.
+
+**Benchmark dataset shape (resolved 2026-06-24).** The seed dataset is fully
+**modular**, indexed on two dimensions so any cell can be swapped or extended without
+touching the engine:
+- **Phase** — `early`, `growth`, `mid`, `scale`. Department-to-department ratios are
+  researched at each phase, spanning the full range of company sizes / headcounts (not
+  a single size bucket), so the same industry re-baselines as it grows.
+- **Industry** — *all relevant startup industries*, surfaced as a **dropdown** the admin
+  picks at setup (e.g., B2B SaaS, fintech, healthtech, marketplace, consumer/social,
+  AI/ML, hardware/deeptech, biotech, e-commerce/DTC, dev tools/infra, …; final list
+  finalized during the research step). A required **"Other / General"** entry holds a
+  **realistic cross-industry average with extreme outliers trimmed** (a trimmed mean,
+  not a raw mean), so a company with no clean industry match still gets sane defaults.
+
+*Honest scope:* the **engine** is fully buildable now. The **seed data** is researched
+public ratios — useful as a starting point, explicitly labelled, and designed to be
+overwritten. It is **not** live cross-company benchmarking (still out — needs many
+tenants; unchanged from §5).
+
+### 12.3 Incremental-hiring value
+
+Mike's "quantify the incremental benefit of a new hire." The honest, buildable version
+has three layers, strongest first:
+
+1. **Structured justification + benchmark gap** — when a seat is requested, the
+   requesting manager answers the two framed questions: *"what do you do with current
+   headcount?"* and *"what would you do with the new headcount?"* The request is then
+   scored against the §12.2 targets (e.g., "this dept is below its target IC ratio for
+   the growth phase" is a quantified, defensible signal). Fully buildable.
+2. **Cost side in dollars** — fully-loaded cost of the seat and its effect on burn /
+   runway. Fully buildable (it's the Phase-2 planning math applied per seat).
+3. **Benefit side in dollars** — only where the department has a real output/revenue
+   driver the admin supplies (e.g., revenue-per-rep for Sales). Offered as an *optional*
+   input, never fabricated. **We will not invent a causal $ ROI for roles that have no
+   revenue driver** — for those, layers 1–2 are the answer. This is the one place I'm
+   deliberately constraining the ask to stay correct (CLAUDE.md: correctness over speed).
+
+> **Resolved 2026-06-24:** no department revenue drivers are wired in this round —
+> **ship layers 1–2 only.** Layer 3 stays in the schema as an optional, admin-supplied
+> field for later, but no dollar-benefit math is built now.
+
+New fields on `hiring_requests`: `current_hc_narrative`, `new_hc_narrative`,
+`expected_value_basis` (`benchmark` | `revenue_driver` | `qualitative`),
+`expected_value_amount` (nullable).
+
+### 12.4 Position Economy — envelopes + framing
+
+"Finance prints money; positions trickle down through management." Implemented as:
+- The existing **org hierarchy** (`departments.parent_id`) + **budget envelopes**
+  (§3, Phase 2) provide the structure; roll-ups already flow up the tree.
+- Finance/Admin sets a **total headcount budget and money budget** at the top
+  (`budget_envelopes` at the root), and decisions are framed as consuming from that
+  envelope as seats trickle down the hierarchy.
+- **Deferred:** a full *cascading-allocation engine* (every seat hard-debiting a
+  parent's sub-envelope with enforcement) is the heaviest possible reading and is **not**
+  in this round; we ship envelopes + roll-up + the framing, and can add hard cascade
+  later without schema rework (the hierarchy and envelopes are already there).
+
+### 12.5 Roles & permissions delta
+
+No new roles. Two clarifications to §4:
+- **Finance Admin / Owner** — owns `workspace_settings` (seat_mode, backfill_policy,
+  phase), edits `target_ratios`, supplies revenue drivers.
+- **C-Suite** — may **modulate target_ratios** and set top-level budget envelopes
+  (consistent with their existing "sets budgets / approves plan" rights).
+- **Department Manager** — sees their department's ratios-vs-target and answers the
+  incremental-value questions on their own requests; unchanged comp visibility.
+
+### 12.6 HR-software import (unchanged, restated)
+
+Mike's "ideally import directly from HR software" is the same item as §5/Decision C:
+live HRIS connectors need each vendor's API + credentials and aren't buildable blind.
+The pluggable import-adapter interface + file adapters (CSV/XLSX, already partly built)
+remain the answer; named connectors drop in later.
+
+---
+
+## 13. Revised phase & build-sequence delta
+
+The philosophy layer inserts **before** modeling, so the milestone plan (§10) gains a
+new early milestone and two later ones. Unchanged milestones keep their numbers.
+
+- **M2.5 — Philosophy & settings (NEW, before requests):** `workspace_settings`,
+  seat_mode + backfill_policy, company_phase; the `seats` entity and lifecycle;
+  employee↔seat occupancy; active-vs-approved roll-up. Full unit tests on the seat
+  lifecycle (every transition, both modes) and the active/approved math.
+- **M3 — Structured requests (revised):** a request now opens/changes a **seat** and
+  carries the §12.3 value/justification fields. Status workflow drives the seat
+  lifecycle.
+- **M4 — Roll-ups (revised):** add the ratios-vs-target panels (department mix +
+  level mix) and growth-trend-per-department views on top of the existing roll-ups.
+- **M4.5 — Benchmark seed (NEW, data task — runs here, not now):** run the deep
+  research to populate `benchmarks` across the **phase × industry** grid (§12.2),
+  including the trimmed-average **"Other / General"** set; seed `target_ratios` from it;
+  mark as overridable. *Decision: produced at this milestone, not as an early standalone.*
+- **M5 / M6 — unchanged** (planning engine; org chart + adapters), now also consuming
+  seats and targets.
+
+**Open questions — resolved (philosophy round, 2026-06-24):**
+
+1. **Phase taxonomy** → `early / growth / mid / scale`, researched across **all company
+   sizes / headcounts** and kept **modular** (any phase cell swappable).
+2. **Benchmark scope** → **all relevant startup industries**, admin-selectable via a
+   **dropdown**, plus a required **"Other / General"** = realistic cross-industry
+   average with extreme outliers trimmed. Final industry list locked during M4.5 research.
+3. **Revenue drivers** → none for now; **ship incremental-value layers 1–2 only**
+   (§12.3). Layer-3 field retained for later.
+4. **Research timing** → **wait until M4.5**; it stays explicitly in the plan as a
+   data-production milestone.

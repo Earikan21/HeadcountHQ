@@ -9,7 +9,9 @@
 // synonyms used for auto-mapping. `required` blocks import if missing.
 export const SCHEMA = [
   { key: "employee_id",         label: "Employee ID",         required: true,  syn: ["employeeid","empid","id","eid","employeenumber","empno","workerid"] },
-  { key: "name",                label: "Name",                required: true,  syn: ["name","fullname","employeename","employee","workername"] },
+  { key: "first_name",          label: "First name",          required: false, syn: ["firstname","first","givenname","forename","fname","givenname"] },
+  { key: "last_name",           label: "Last name",           required: false, syn: ["lastname","last","surname","familyname","lname","famname"] },
+  { key: "name",                label: "Full name",           required: false, syn: ["name","fullname","employeename","employee","workername","displayname"] },
   { key: "department",          label: "Department",          required: true,  syn: ["department","dept","team","division","orgunit","businessunit"] },
   { key: "job_title",           label: "Job Title",           required: false, syn: ["jobtitle","title","jobtitles","role","position","jobrole"] },
   { key: "compensation_amount", label: "Compensation Amount", required: true,  syn: ["compensationamount","compamount","compensation","salary","pay","basepay","basesalary","amount","rate","baserate"] },
@@ -22,29 +24,52 @@ export const SCHEMA = [
 export const DEFAULT_ASSUMPTIONS = { hoursPerYear: 2080, daysPerYear: 260, weeksPerYear: 52 };
 export const EXPORT_COLS = ["employee_id","name","department","job_title","manager","employee_type","employment_status","compensation_amount","compensation_unit","annual_salary"];
 
+/** Fields that can satisfy the "name" requirement (any one is enough). */
+export const NAME_FIELDS = ["name", "first_name", "last_name"];
+
+/**
+ * Validate a column mapping. Returns a list of human-readable problems.
+ * Name is special: a single Name column OR a First/Last name column will do.
+ */
+export function mappingProblems(mapping) {
+  const missing = [];
+  for (const f of SCHEMA) {
+    if (f.required && !mapping[f.key]) missing.push(f.label);
+  }
+  if (!NAME_FIELDS.some((k) => mapping[k])) missing.push("Name (or First/Last name)");
+  return missing;
+}
+
 export const normHeader = (h) => String(h == null ? "" : h).toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** Auto-map source headers to canonical keys. Returns { mapping, confidence }. */
+/**
+ * Auto-map source headers to canonical keys. Returns { mapping, confidence }.
+ *
+ * Two phases so that EXACT synonym matches always win over fuzzy substring
+ * matches anywhere in the schema (e.g. "Full Name" must map to Name, not get
+ * grabbed by Last name's loose "lname" substring).
+ */
 export function autoMap(headers) {
   const used = new Set();
   const mapping = {};
   const confidence = {};
+  for (const f of SCHEMA) { mapping[f.key] = null; confidence[f.key] = "none"; }
   const normed = headers.map((h) => ({ raw: h, n: normHeader(h) }));
+
+  // Phase 1: exact synonym match.
   for (const field of SCHEMA) {
-    let pick = null, conf = "none";
     for (const h of normed) {
       if (used.has(h.raw)) continue;
-      if (field.syn.includes(h.n)) { pick = h.raw; conf = "high"; break; }
+      if (field.syn.includes(h.n)) { mapping[field.key] = h.raw; confidence[field.key] = "high"; used.add(h.raw); break; }
     }
-    if (!pick) {
-      for (const h of normed) {
-        if (used.has(h.raw)) continue;
-        if (field.syn.some((sx) => h.n.includes(sx) || sx.includes(h.n))) { pick = h.raw; conf = "low"; break; }
-      }
+  }
+  // Phase 2: fuzzy substring match for anything still unmapped.
+  for (const field of SCHEMA) {
+    if (mapping[field.key]) continue;
+    for (const h of normed) {
+      if (used.has(h.raw)) continue;
+      if (field.syn.some((sx) => h.n.includes(sx) || sx.includes(h.n))) { mapping[field.key] = h.raw; confidence[field.key] = "low"; used.add(h.raw); break; }
     }
-    if (pick) used.add(pick);
-    mapping[field.key] = pick;
-    confidence[field.key] = conf;
   }
   return { mapping, confidence };
 }
@@ -125,7 +150,10 @@ export function buildCanonical(rawRows, mapping, assumptions, opts = {}) {
   rawRows.forEach((raw, i) => {
     const issues = [];
     const id = (get(raw, "employee_id") ?? "").toString().trim();
-    const name = (get(raw, "name") ?? "").toString().trim();
+    const singleName = (get(raw, "name") ?? "").toString().trim();
+    const firstName = (get(raw, "first_name") ?? "").toString().trim();
+    const lastName = (get(raw, "last_name") ?? "").toString().trim();
+    const name = singleName || [firstName, lastName].filter(Boolean).join(" ").trim();
     const dept = (get(raw, "department") ?? "").toString().trim();
     const title = (get(raw, "job_title") ?? "").toString().trim();
     const rawAmount = get(raw, "compensation_amount");

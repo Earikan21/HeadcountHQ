@@ -60,3 +60,42 @@ test("rollup totals by department, excludes inactive when asked", () => {
   assert.equal(roll.totals.annualCost, 300000);
   assert.equal(roll.departments[0].department, "Eng");
 });
+
+test("autoMap claims First/Last name columns (not the generic Name)", () => {
+  const { mapping, confidence } = R.autoMap(["Employee ID", "First Name", "Last Name", "Dept", "Salary"]);
+  assert.equal(mapping.first_name, "First Name");
+  assert.equal(mapping.last_name, "Last Name");
+  assert.equal(mapping.name, null);
+  assert.equal(confidence.first_name, "high");
+});
+
+test("buildCanonical combines first + last into name", () => {
+  const mapping = { employee_id: "ID", first_name: "First", last_name: "Last", department: "Dept", compensation_amount: "Amt", compensation_unit: "Unit" };
+  const built = R.buildCanonical(
+    [{ ID: "E1", First: "Dana", Last: "Okafor", Dept: "Eng", Amt: "120000", Unit: "Annual" }],
+    mapping
+  );
+  assert.equal(built.rows[0].name, "Dana Okafor");
+  assert.equal(built.rows[0]._ok, true);
+});
+
+test("a single first-name column alone is sufficient", () => {
+  const mapping = { employee_id: "ID", first_name: "First", department: "Dept", compensation_amount: "Amt", compensation_unit: "Unit" };
+  const built = R.buildCanonical([{ ID: "E1", First: "Cher", Dept: "Eng", Amt: "100000", Unit: "Annual" }], mapping);
+  assert.equal(built.rows[0].name, "Cher");
+  assert.equal(built.rows[0]._ok, true);
+});
+
+test("a single combined Name column still works", () => {
+  const mapping = { employee_id: "ID", name: "Name", department: "Dept", compensation_amount: "Amt", compensation_unit: "Unit" };
+  const built = R.buildCanonical([{ ID: "E1", Name: "Liam Chen", Dept: "Eng", Amt: "100000", Unit: "Annual" }], mapping);
+  assert.equal(built.rows[0].name, "Liam Chen");
+  assert.equal(built.rows[0]._ok, true);
+});
+
+test("missing every name field is an error", () => {
+  const mapping = { employee_id: "ID", department: "Dept", compensation_amount: "Amt", compensation_unit: "Unit" };
+  const built = R.buildCanonical([{ ID: "E1", Dept: "Eng", Amt: "100000", Unit: "Annual" }], mapping);
+  assert.equal(built.rows[0]._ok, false);
+  assert.ok(built.rows[0]._issues.some((x) => x.field === "name"));
+});
