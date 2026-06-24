@@ -70,8 +70,8 @@ test("seat mode + auto: vacating reopens the seat", async () => {
 
 test("person mode: vacating closes the seat (headcount dissolves)", async () => {
   const c = await login("ada@acme.co", "supersecret123");
-  await c.get("/settings");
-  await c.post("/settings", { seat_mode: "person", backfill_policy: "auto", company_phase: "early", industry: "" });
+  await c.get("/philosophy");
+  await c.post("/philosophy", { seat_mode: "person", backfill_policy: "auto", company_phase: "early", industry: "" });
   const seatId = seatIdFor("E-2");
   await c.post(`/seats/${seatId}/vacate`, {});
   assert.equal(srv.db.prepare("SELECT status FROM seats WHERE id=?").get(seatId).status, "closed");
@@ -83,7 +83,7 @@ test("person mode: vacating closes the seat (headcount dissolves)", async () => 
 
 test("seat mode + reapprove: vacating freezes, then re-approve reopens", async () => {
   const c = await login("ada@acme.co", "supersecret123");
-  await c.post("/settings", { seat_mode: "seat", backfill_policy: "reapprove", company_phase: "early", industry: "" });
+  await c.post("/philosophy", { seat_mode: "seat", backfill_policy: "reapprove", company_phase: "early", industry: "" });
   const seatId = seatIdFor("E-3");
   await c.post(`/seats/${seatId}/vacate`, {});
   assert.equal(srv.db.prepare("SELECT status FROM seats WHERE id=?").get(seatId).status, "frozen");
@@ -100,7 +100,7 @@ test("managers can view headcount but not change settings or seats", async () =>
   const pw = (await created.text()).match(/<code>([^<]+)<\/code>/)[1];
   const mgr = await login("mo@acme.co", pw);
   assert.equal((await mgr.get("/headcount")).status, 200);
-  assert.equal((await mgr.get("/settings")).status, 403);
+  assert.equal((await mgr.get("/philosophy")).status, 403);
   const anySeat = srv.db.prepare("SELECT id FROM seats LIMIT 1").get().id;
   assert.equal((await mgr.post(`/seats/${anySeat}/vacate`, {})).status, 403);
 });

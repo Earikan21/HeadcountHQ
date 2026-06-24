@@ -34,14 +34,14 @@ export function seatsForRollup(db, { departmentId = null } = {}) {
 }
 
 /** Ensure an imported employee occupies a FILLED seat (create or update). */
-export function ensureSeatForEmployee(db, { employeeId, departmentId, title }) {
+export function ensureSeatForEmployee(db, { employeeId, departmentId, title, loadedCost = null }) {
   const emp = db.prepare("SELECT seat_id FROM employees WHERE id = ?").get(employeeId);
   if (emp && emp.seat_id) {
     db.prepare("UPDATE seats SET department_id = ?, title = ?, updated_at = datetime('now') WHERE id = ?")
       .run(departmentId, title, emp.seat_id);
     return emp.seat_id;
   }
-  const seat = createSeat(db, { departmentId, title, status: "filled", occupantEmployeeId: employeeId });
+  const seat = createSeat(db, { departmentId, title, status: "filled", occupantEmployeeId: employeeId, loadedCost });
   db.prepare("UPDATE employees SET seat_id = ? WHERE id = ?").run(seat.id, employeeId);
   return seat.id;
 }

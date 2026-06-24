@@ -187,4 +187,30 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_24_005_philosophy",
+    up(db) {
+      db.exec(`
+        ALTER TABLE workspace_settings ADD COLUMN target_span_of_control  REAL    NOT NULL DEFAULT 6;
+        ALTER TABLE workspace_settings ADD COLUMN max_layers              INTEGER NOT NULL DEFAULT 6;
+        ALTER TABLE workspace_settings ADD COLUMN loaded_cost_multiplier  REAL    NOT NULL DEFAULT 1.3;
+        ALTER TABLE workspace_settings ADD COLUMN annual_attrition_pct    REAL    NOT NULL DEFAULT 10;
+        ALTER TABLE workspace_settings ADD COLUMN contractor_target_pct   REAL    NOT NULL DEFAULT 0;
+        ALTER TABLE workspace_settings ADD COLUMN budgeting_approach      TEXT    NOT NULL DEFAULT 'incremental';
+        ALTER TABLE workspace_settings ADD COLUMN require_csuite_approval INTEGER NOT NULL DEFAULT 0;
+
+        CREATE TABLE target_ratios (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id INTEGER NOT NULL DEFAULT 1,
+          family       TEXT NOT NULL,        -- 'department_mix'
+          key          TEXT NOT NULL,        -- department name
+          target_pct   REAL NOT NULL,
+          source       TEXT NOT NULL DEFAULT 'manual',  -- 'default' | 'manual'
+          updated_by   INTEGER,
+          updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (workspace_id, family, key)
+        );
+      `);
+    },
+  },
 ];

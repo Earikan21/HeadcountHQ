@@ -71,7 +71,7 @@ function page(ctx, { roll, seats }) {
 
   const body = html`
     <div class="pagehead row-between">
-      <div><h1>Headcount</h1><p class="muted">Approved vs. active by seat. Seat behavior follows your <a href="/settings">philosophy settings</a> (mode: <b>${settings.seat_mode}</b>, backfill: <b>${settings.backfill_policy}</b>).</p></div>
+      <div><h1>Headcount</h1><p class="muted">Approved vs. active by seat. Seat behavior follows your <a href="/philosophy">philosophy</a> (mode: <b>${settings.seat_mode}</b>, backfill: <b>${settings.backfill_policy}</b>).</p></div>
     </div>
     <div class="kpis">
       ${kpi("Approved headcount", t.approved)}

@@ -10,6 +10,8 @@ import {
   upsertDepartmentByName, upsertEmployee, listEmployees,
 } from "../repos/roster.js";
 import { ensureSeatForEmployee } from "../repos/seats.js";
+import { getSettings } from "../repos/settings.js";
+import { loadedCost as loadedCostFn } from "../domain/philosophy.js";
 
 const compCell = (user, annual) => {
   if (annual == null) return "—";
@@ -114,12 +116,15 @@ export function registerRosterRoutes(router) {
     const batch = getBatch(ctx.db, Number(ctx.params.id));
     if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
     const built = R.buildCanonical(batch.rawRows, batch.mapping);
+    const mult = getSettings(ctx.db).loaded_cost_multiplier;
     let committed = 0;
     for (const row of built.rows) {
       if (!row._ok) continue;
       const deptId = upsertDepartmentByName(ctx.db, row.department);
       const empId = upsertEmployee(ctx.db, row, deptId);
-      if (row._status !== "inactive") ensureSeatForEmployee(ctx.db, { employeeId: empId, departmentId: deptId, title: row.job_title });
+      if (row._status !== "inactive") {
+        ensureSeatForEmployee(ctx.db, { employeeId: empId, departmentId: deptId, title: row.job_title, loadedCost: loadedCostFn(row.annual_salary, mult) });
+      }
       committed++;
     }
     setBatchStatus(ctx.db, batch.id, "committed", committed);

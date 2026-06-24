@@ -19,7 +19,7 @@ export function registerHomeRoutes(router) {
       tile("Hiring requests", "Submit and track structured requests for new roles.", "/requests"),
     ];
     if (ctx.user.role !== "manager") tiles.push(tile("Planning", "Budgets, scenarios, and runway.", "/planning"));
-    if (isAdmin) tiles.push(tile("Philosophy settings", "Set the rules: seats vs. people, backfill, phase.", "/settings"));
+    if (isAdmin) tiles.push(tile("Philosophy", "Set the rules: seats, backfill, span, cost, targets.", "/philosophy"));
     if (isAdmin) tiles.push(tile("Accounts", "Manage who can sign in.", "/accounts"));
 
     const body = html`

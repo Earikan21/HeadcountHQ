@@ -36,9 +36,3 @@ test("fillRate guards divide-by-zero", () => {
   assert.equal(S.fillRate({ approved: 0, active: 0 }), 0);
   assert.equal(S.fillRate({ approved: 4, active: 2 }), 0.5);
 });
-
-test("normalizeSettings applies safe defaults", () => {
-  assert.deepEqual(S.normalizeSettings({}), { seat_mode: "seat", backfill_policy: "auto", company_phase: "early", industry: "" });
-  assert.equal(S.normalizeSettings({ seat_mode: "nope" }).seat_mode, "seat");
-  assert.equal(S.normalizeSettings({ company_phase: "scale" }).company_phase, "scale");
-});

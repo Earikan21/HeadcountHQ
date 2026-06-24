@@ -7,7 +7,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAccountRoutes } from "./routes/accounts.js";
 import { registerDepartmentRoutes } from "./routes/departments.js";
 import { registerRosterRoutes } from "./routes/roster.js";
-import { registerSettingsRoutes } from "./routes/settings.js";
+import { registerPhilosophyRoutes } from "./routes/philosophy.js";
 import { registerSeatRoutes } from "./routes/seats.js";
 
 export function registerRoutes(router, _deps) {
@@ -19,6 +19,6 @@ export function registerRoutes(router, _deps) {
   registerAccountRoutes(router);
   registerDepartmentRoutes(router);
   registerRosterRoutes(router);
-  registerSettingsRoutes(router);
+  registerPhilosophyRoutes(router);
   registerSeatRoutes(router);
 }

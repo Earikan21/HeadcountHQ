@@ -65,13 +65,3 @@ export function countSeats(seats) {
 export function fillRate(counts) {
   return counts.approved ? counts.active / counts.approved : 0;
 }
-
-/** Normalize/validate a settings object, applying defaults. */
-export function normalizeSettings(s = {}) {
-  return {
-    seat_mode: SEAT_MODES.includes(s.seat_mode) ? s.seat_mode : "seat",
-    backfill_policy: BACKFILL_POLICIES.includes(s.backfill_policy) ? s.backfill_policy : "auto",
-    company_phase: ["early", "growth", "mid", "scale"].includes(s.company_phase) ? s.company_phase : "early",
-    industry: typeof s.industry === "string" ? s.industry : "",
-  };
-}

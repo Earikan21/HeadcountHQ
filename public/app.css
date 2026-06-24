@@ -96,3 +96,7 @@ tr.rowerr{background:#fef7f7}
 .hdrpick-row{display:flex;gap:8px;align-items:center}
 .hdrpick-row select{margin-top:0}
 .hdrpick .small{margin:8px 0 0}
+
+/* ---- philosophy hub ---- */
+.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 16px}
+.tcell{width:90px;text-align:right;margin-top:0}
