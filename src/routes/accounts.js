@@ -157,7 +157,7 @@ function accountsPage(ctx, { errors, banner, form = {} }) {
           </fieldset>
           <button class="btn" type="submit">Create account</button>
         </form>
-        <p class="muted small">Need a department first? Add one on the <a href="/roster">Roster</a> page.</p>
+        <p class="muted small">Need a department first? Manage them on the <a href="/departments">Departments</a> page.</p>
       </section>
     </div>`;
   return renderPage(ctx, { title: "Accounts", body, active: "accounts" });

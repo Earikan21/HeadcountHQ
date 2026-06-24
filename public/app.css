@@ -100,3 +100,14 @@ tr.rowerr{background:#fef7f7}
 /* ---- philosophy hub ---- */
 .formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 16px}
 .tcell{width:90px;text-align:right;margin-top:0}
+
+/* ---- M3 requests & budgets ---- */
+textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font:inherit;font-size:14px;margin-top:5px;background:#fff;color:var(--ink);resize:vertical}
+.timeline{list-style:none;margin:0;padding:0}
+.timeline li{padding:7px 0 7px 14px;border-left:2px solid var(--line);margin-left:4px;font-size:13.5px}
+.timeline li b{text-transform:capitalize}
+.ubar{height:8px;border-radius:6px;background:#eef1f7;overflow:hidden;min-width:80px}
+.ubar i{display:block;height:100%;border-radius:6px}
+.ubar i.ok{background:var(--green)} .ubar i.warn{background:var(--amber)} .ubar i.over{background:var(--red)}
+.tcell.wide{width:120px}
+fieldset.radios legend{padding:0}

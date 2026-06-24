@@ -213,4 +213,65 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_24_006_requests",
+    up(db) {
+      db.exec(`
+        ALTER TABLE workspace_settings ADD COLUMN budget_enforcement TEXT NOT NULL DEFAULT 'soft'
+          CHECK (budget_enforcement IN ('soft','hard'));
+
+        CREATE TABLE budget_envelopes (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id     INTEGER NOT NULL DEFAULT 1,
+          department_id    INTEGER REFERENCES departments(id),
+          period           TEXT NOT NULL DEFAULT 'current',
+          headcount_budget INTEGER NOT NULL DEFAULT 0,
+          money_budget     REAL NOT NULL DEFAULT 0,
+          set_by           INTEGER,
+          updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (workspace_id, department_id, period)
+        );
+
+        CREATE TABLE hiring_requests (
+          id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id          INTEGER NOT NULL DEFAULT 1,
+          department_id         INTEGER REFERENCES departments(id),
+          title                 TEXT NOT NULL,
+          level_id              INTEGER REFERENCES levels(id),
+          band_min              REAL,
+          band_max              REAL,
+          target_start_month    TEXT,
+          type                  TEXT NOT NULL CHECK (type IN ('net_new','backfill')),
+          justification         TEXT,
+          current_hc_narrative  TEXT,
+          new_hc_narrative      TEXT,
+          expected_value_basis  TEXT,
+          expected_value_amount REAL,
+          estimated_cost        REAL,
+          status                TEXT NOT NULL DEFAULT 'submitted'
+                                 CHECK (status IN ('submitted','under_review','approved','deferred','declined')),
+          requester_id          INTEGER,
+          decided_by            INTEGER,
+          decided_at            TEXT,
+          decision_note         TEXT,
+          seat_id               INTEGER REFERENCES seats(id),
+          created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE request_status_history (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          request_id  INTEGER NOT NULL REFERENCES hiring_requests(id) ON DELETE CASCADE,
+          from_status TEXT,
+          to_status   TEXT NOT NULL,
+          actor_id    INTEGER,
+          note        TEXT,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX idx_req_dept ON hiring_requests(department_id);
+        CREATE INDEX idx_req_status ON hiring_requests(status);
+      `);
+    },
+  },
 ];

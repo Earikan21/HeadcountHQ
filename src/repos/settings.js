@@ -5,7 +5,7 @@ const COLS = [
   "seat_mode", "backfill_policy", "company_phase", "industry",
   "target_span_of_control", "max_layers", "loaded_cost_multiplier",
   "annual_attrition_pct", "contractor_target_pct", "budgeting_approach",
-  "require_csuite_approval",
+  "require_csuite_approval", "budget_enforcement",
 ];
 
 export function getSettings(db) {
@@ -20,13 +20,13 @@ export function updateSettings(db, fields, userId) {
        seat_mode=?, backfill_policy=?, company_phase=?, industry=?,
        target_span_of_control=?, max_layers=?, loaded_cost_multiplier=?,
        annual_attrition_pct=?, contractor_target_pct=?, budgeting_approach=?,
-       require_csuite_approval=?, updated_at=datetime('now'), updated_by=?
+       require_csuite_approval=?, budget_enforcement=?, updated_at=datetime('now'), updated_by=?
      WHERE workspace_id = 1`
   ).run(
     n.seat_mode, n.backfill_policy, n.company_phase, n.industry,
     n.target_span_of_control, n.max_layers, n.loaded_cost_multiplier,
     n.annual_attrition_pct, n.contractor_target_pct, n.budgeting_approach,
-    n.require_csuite_approval, userId
+    n.require_csuite_approval, n.budget_enforcement, userId
   );
   return getSettings(db);
 }

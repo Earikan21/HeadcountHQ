@@ -186,7 +186,7 @@ function rosterPage(ctx, { employees }) {
   const body = html`
     <div class="pagehead row-between">
       <div><h1>Roster</h1><p class="muted">${isAdmin ? "Your current people and compensation." : (compVisibility(ctx.user) === "exact" ? "" : "Compensation is shown as bands.")} ${departmentScope(ctx.user) != null ? "You see your own department." : ""}</p></div>
-      ${isAdmin ? html`<div class="actions"><a class="btn" href="/roster/import">Import roster</a> <a class="btn ghost" href="/roster/export.csv">Export CSV</a></div>` : ""}
+      ${isAdmin ? html`<div class="actions"><a class="btn" href="/roster/import">Import roster</a> <a class="btn ghost" href="/departments">Departments</a> <a class="btn ghost" href="/roster/export.csv">Export CSV</a></div>` : ""}
     </div>
     <div class="kpis">${kpis}</div>
     ${empty

@@ -58,6 +58,7 @@ export function normalizeSettings(s = {}) {
     contractor_target_pct: clamp(s.contractor_target_pct, 0, 100, 0),
     budgeting_approach: oneOf(s.budgeting_approach, BUDGETING, "incremental"),
     require_csuite_approval: bool(s.require_csuite_approval) ? 1 : 0,
+    budget_enforcement: oneOf(s.budget_enforcement, ["soft", "hard"], "soft"),
   };
 }
 

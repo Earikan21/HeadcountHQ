@@ -128,7 +128,7 @@ function listPage(ctx, { errors }) {
         </form>
       </section>
     </div>`;
-  return renderPage(ctx, { title: "Departments", body, active: "accounts" });
+  return renderPage(ctx, { title: "Departments", body, active: "departments" });
 }
 
 function managePage(ctx, { dept, errors }) {
@@ -189,5 +189,5 @@ function managePage(ctx, { dept, errors }) {
         </div>
       </form>
     </section>`;
-  return renderPage(ctx, { title: dept.name, body, active: "accounts" });
+  return renderPage(ctx, { title: dept.name, body, active: "departments" });
 }

@@ -117,6 +117,11 @@ function page(ctx) {
           ${radio("backfill_policy", "reapprove", s.backfill_policy, "<b>Require re-approval</b> — vacated seat freezes to the budget pool.")}
         </fieldset>
         <label class="radio"><input type="checkbox" name="require_csuite_approval" ${s.require_csuite_approval ? raw("checked") : ""}> New seats require C-suite approval</label>
+        <p class="muted small" style="margin:12px 0 4px">When a hiring request would exceed a department's budget:</p>
+        <fieldset class="radios">
+          ${radio("budget_enforcement", "soft", s.budget_enforcement, "<b>Soft</b> — allow it, but flag the gap for the approver (bottom-up meets top-down).")}
+          ${radio("budget_enforcement", "hard", s.budget_enforcement, "<b>Hard</b> — block approvals that push a department over budget; the cap must be raised first.")}
+        </fieldset>
       </section>
 
       <section class="card">

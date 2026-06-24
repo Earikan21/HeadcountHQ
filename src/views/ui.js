@@ -24,8 +24,9 @@ function navFor(user, active) {
   links.push(item("/roster", "Roster", "roster"));
   links.push(item("/headcount", "Headcount", "headcount"));
   links.push(item("/requests", "Requests", "requests"));
-  if (user.role !== "manager") links.push(item("/planning", "Planning", "planning"));
+  if (user.role !== "manager") links.push(item("/budgets", "Budgets", "budgets"));
   if (user.role === "finance_admin") {
+    links.push(item("/departments", "Departments", "departments"));
     links.push(item("/accounts", "Accounts", "accounts"));
     links.push(item("/philosophy", "Philosophy", "philosophy"));
     links.push(item("/audit", "Audit", "audit"));
