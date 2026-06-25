@@ -26,7 +26,7 @@ with role-based access and compensation confidentiality enforced on the server.
 | M4 | Roll-ups — ratios-vs-target panels + growth trends | Next |
 | M4.5 | Benchmark seed — phase × industry research; phase-aware target suggestions | Planned |
 | M5 | Planning engine — envelopes, runway/burn, scenarios, plan-vs-actual, exports | Planned |
-| M6 | Org chart, audit-history UI, import-adapter framework | Planned |
+| M6 | Org chart, audit-history UI, import-adapter framework | Next |
 
 ## First run
 

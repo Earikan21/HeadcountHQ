@@ -304,4 +304,47 @@ export const MIGRATIONS = [
       db.exec(`ALTER TABLE employees ADD COLUMN start_date TEXT;`);
     },
   },
+  {
+    name: "2026_06_24_011_planning",
+    up(db) {
+      db.exec(`
+        CREATE TABLE financials (
+          workspace_id                  INTEGER PRIMARY KEY DEFAULT 1,
+          cash_balance                  REAL NOT NULL DEFAULT 0,
+          monthly_burn                  REAL NOT NULL DEFAULT 0,
+          monthly_revenue               REAL NOT NULL DEFAULT 0,
+          revenue_growth_pct            REAL NOT NULL DEFAULT 0,
+          comp_inflation_pct            REAL NOT NULL DEFAULT 0,
+          horizon_months                INTEGER NOT NULL DEFAULT 24,
+          productivity_conservative_pct REAL NOT NULL DEFAULT 70,
+          productivity_aggressive_pct   REAL NOT NULL DEFAULT 135,
+          updated_by                    INTEGER,
+          updated_at                    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO financials (workspace_id) VALUES (1);
+
+        CREATE TABLE scenarios (
+          id           INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id INTEGER NOT NULL DEFAULT 1,
+          name         TEXT NOT NULL,
+          description  TEXT,
+          created_by   INTEGER,
+          created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE scenario_items (
+          id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+          scenario_id           INTEGER NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+          department_id         INTEGER REFERENCES departments(id),
+          new_hires             INTEGER NOT NULL DEFAULT 0,
+          start_month           INTEGER NOT NULL DEFAULT 0,
+          pace                  TEXT NOT NULL DEFAULT 'even',
+          cost_per_hire         REAL,
+          productivity_per_head REAL,
+          outcome               TEXT NOT NULL DEFAULT 'base',
+          UNIQUE (scenario_id, department_id)
+        );
+      `);
+    },
+  },
 ];

@@ -11,6 +11,7 @@ import { registerPhilosophyRoutes } from "./routes/philosophy.js";
 import { registerSeatRoutes } from "./routes/seats.js";
 import { registerRequestRoutes } from "./routes/requests.js";
 import { registerBudgetRoutes } from "./routes/budgets.js";
+import { registerPlanningRoutes } from "./routes/planning.js";
 
 export function registerRoutes(router, _deps) {
   router.get("/health", (ctx) => ctx.send(200, "text/plain; charset=utf-8", "Server healthy"));
@@ -25,4 +26,5 @@ export function registerRoutes(router, _deps) {
   registerSeatRoutes(router);
   registerRequestRoutes(router);
   registerBudgetRoutes(router);
+  registerPlanningRoutes(router);
 }
