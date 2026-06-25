@@ -86,5 +86,15 @@ export function listEmployees(db, { departmentId = null } = {}) {
   return departmentId == null ? db.prepare(sql).all() : db.prepare(sql).all(departmentId);
 }
 
+/** Generate the next sequential employee id like "E-0007". */
+export function nextEmployeeId(db) {
+  const rows = db.prepare("SELECT employee_ext_id FROM employees").all();
+  let max = 0;
+  for (const r of rows) { const m = String(r.employee_ext_id || "").match(/(\d+)\s*$/); if (m) max = Math.max(max, Number(m[1])); }
+  return "E-" + String(max + 1).padStart(4, "0");
+}
+export const getEmployeeByExtId = (db, ext) =>
+  db.prepare("SELECT * FROM employees WHERE employee_ext_id = ?").get(String(ext).trim());
+
 export const countEmployees = (db) =>
   db.prepare("SELECT COUNT(*) AS n FROM employees").get().n;

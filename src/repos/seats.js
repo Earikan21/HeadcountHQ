@@ -46,6 +46,13 @@ export function ensureSeatForEmployee(db, { employeeId, departmentId, title, loa
   return seat.id;
 }
 
+/** Fill a seat with an employee (open -> filled), capturing actual loaded cost. */
+export function fillSeat(db, seatId, employeeId, loadedCost = null) {
+  db.prepare("UPDATE seats SET status='filled', occupant_employee_id=?, loaded_cost_estimate=COALESCE(?, loaded_cost_estimate), opened_at=COALESCE(opened_at, datetime('now')), updated_at=datetime('now') WHERE id=?")
+    .run(employeeId, loadedCost, seatId);
+  db.prepare("UPDATE employees SET seat_id=? WHERE id=?").run(seatId, employeeId);
+}
+
 /** Apply the vacancy transition dictated by settings; clears occupancy. */
 export function vacateSeat(db, id, settings, actorId) {
   const seat = getSeat(db, id);

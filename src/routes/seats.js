@@ -104,6 +104,7 @@ function seatActions(ctx, s) {
     </form>`;
   if (s.status === "filled") return form("vacate", "Mark vacated");
   if (s.status === "frozen") return form("reopen", "Re-approve");
+  if (s.status === "open") return html`<a class="btn sm" href="/roster/new?seat=${s.id}">Fill seat</a> ${form("close", "Close")}`;
   if (s.status !== "closed") return form("close", "Close");
   return "";
 }

@@ -1,4 +1,4 @@
-import { html, raw } from "../html.js";
+import { html, raw, esc } from "../html.js";
 import { renderPage, csrfField, errorList, money } from "../views/ui.js";
 import { requireAuth, requirePermission } from "../middleware.js";
 import { canImportRoster, compVisibility, canViewCompTotals, departmentScope } from "../authz.js";
@@ -7,9 +7,10 @@ import * as R from "../domain/roster.js";
 import { logAudit } from "../repos/audit.js";
 import {
   createBatch, getBatch, updateBatchMapping, setBatchHeaderRow, setBatchStatus, listBatches,
-  upsertDepartmentByName, upsertEmployee, listEmployees,
+  upsertDepartmentByName, upsertEmployee, listEmployees, nextEmployeeId, getEmployeeByExtId,
 } from "../repos/roster.js";
-import { ensureSeatForEmployee, vacateSeat } from "../repos/seats.js";
+import { ensureSeatForEmployee, vacateSeat, fillSeat, getSeat } from "../repos/seats.js";
+import { listDepartments, getDepartment } from "../repos/departments.js";
 import { getSettings } from "../repos/settings.js";
 import { loadedCost as loadedCostFn } from "../domain/philosophy.js";
 
@@ -38,6 +39,58 @@ export function registerRosterRoutes(router) {
     }));
     logAudit(ctx.db, { userId: ctx.user.id, action: "roster.exported", entity: "employee", detail: { count: rows.length } });
     ctx.attachment("roster-clean.csv", "text/csv; charset=utf-8", toCsv(R.EXPORT_COLS, rows));
+  });
+
+
+  // ---- Onboard a single person (no CSV re-import) ----
+  router.get("/roster/new", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const seatId = ctx.query.get("seat");
+    let seat = null;
+    if (seatId) { seat = getSeat(ctx.db, Number(seatId)); if (!seat || seat.status !== "open") seat = null; }
+    ctx.html(200, onboardPage(ctx, { form: {}, seat }));
+  });
+
+  router.post("/roster/new", (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const f = ctx.body;
+    const seatId = f.seat_id ? Number(f.seat_id) : null;
+    const seat = seatId ? getSeat(ctx.db, seatId) : null;
+    const errors = [];
+
+    const name = (f.name || "").trim() || [f.first_name, f.last_name].map((x) => (x || "").trim()).filter(Boolean).join(" ");
+    if (!name) errors.push("Name is required (full name, or first and last).");
+
+    const departmentId = seat ? seat.department_id : (f.department_id ? Number(f.department_id) : null);
+    if (!departmentId || !getDepartment(ctx.db, departmentId)) errors.push("Choose a department.");
+
+    const amount = R.parseAmount(f.comp_amount);
+    const unit = R.normUnit(f.comp_unit) || "annual";
+    if (f.comp_amount == null || String(f.comp_amount).trim() === "") errors.push("Compensation is required.");
+    else if (amount == null || amount <= 0) errors.push("Compensation must be a number greater than 0.");
+
+    let extId = (f.employee_id || "").trim() || nextEmployeeId(ctx.db);
+    if (f.employee_id && getEmployeeByExtId(ctx.db, extId)) errors.push(`Employee ID "${extId}" already exists.`);
+
+    if (errors.length) return ctx.html(400, onboardPage(ctx, { form: f, seat, errors }));
+
+    const annual = R.toAnnual(amount, unit, R.DEFAULT_ASSUMPTIONS);
+    const status = R.normStatus(f.employment_status) || "active";
+    const row = {
+      employee_id: extId, name, job_title: (f.job_title || "").trim(),
+      manager: (f.manager || "").trim(), employee_type: (f.employee_type || "").trim(),
+      employment_status: status, compensation_amount: amount, compensation_unit: unit, annual_salary: annual,
+    };
+    const empId = upsertEmployee(ctx.db, row, departmentId);
+    if (f.start_date) ctx.db.prepare("UPDATE employees SET start_date=? WHERE id=?").run(String(f.start_date), empId);
+
+    const mult = getSettings(ctx.db).loaded_cost_multiplier;
+    const loaded = loadedCostFn(annual, mult);
+    if (seat) fillSeat(ctx.db, seat.id, empId, loaded);
+    else ensureSeatForEmployee(ctx.db, { employeeId: empId, departmentId, title: row.job_title, loadedCost: loaded });
+
+    logAudit(ctx.db, { userId: ctx.user.id, action: "person.onboarded", entity: "employee", entityId: empId, detail: { seatId: seat ? seat.id : null } });
+    ctx.redirect(`/roster?msg=Onboarded+${encodeURIComponent(name)}`);
   });
 
   // ---- Step 1: upload ----
@@ -191,7 +244,7 @@ function rosterPage(ctx, { employees }) {
   const body = html`
     <div class="pagehead row-between">
       <div><h1>Roster</h1><p class="muted">${isAdmin ? "Your current people and compensation." : (compVisibility(ctx.user) === "exact" ? "" : "Compensation is shown as bands.")} ${departmentScope(ctx.user) != null ? "You see your own department." : ""}</p></div>
-      ${isAdmin ? html`<div class="actions"><a class="btn" href="/roster/import">Import roster</a> <a class="btn ghost" href="/departments">Departments</a> <a class="btn ghost" href="/roster/export.csv">Export CSV</a></div>` : ""}
+      ${isAdmin ? html`<div class="actions"><a class="btn" href="/roster/new">Add person</a> <a class="btn ghost" href="/roster/import">Import roster</a> <a class="btn ghost" href="/departments">Departments</a> <a class="btn ghost" href="/roster/export.csv">Export CSV</a></div>` : ""}
     </div>
     <div class="kpis">${kpis}</div>
     ${empty
@@ -353,6 +406,54 @@ function reviewPage(ctx, { batch, built }) {
       </section>
     </div>`;
   return renderPage(ctx, { title: "Review import", body, active: "roster" });
+}
+
+
+function onboardPage(ctx, { form, seat, errors }) {
+  const depts = listDepartments(ctx.db);
+  const UNITS = [["annual","Annual"],["monthly","Monthly"],["semimonthly","Semi-monthly"],["biweekly","Bi-weekly"],["weekly","Weekly"],["daily","Daily"],["hourly","Hourly"]];
+  const TYPES = ["Full-Time","Part-Time","Contractor","Intern"];
+  const opt = (v, cur) => v === cur ? raw("selected") : "";
+  const deptField = seat
+    ? html`<input type="hidden" name="seat_id" value="${seat.id}"><p class="muted small">Filling open seat: <b>${seat.title || "Untitled"}</b> in <b>${getDepartment(ctx.db, seat.department_id)?.name || "—"}</b></p>`
+    : html`<label>Department<select name="department_id" required><option value="">Choose…</option>${depts.map((d) => html`<option value="${d.id}" ${opt(String(d.id), String(form.department_id))}>${d.name}</option>`)}</select></label>`;
+  const body = html`
+    <div class="pagehead"><a class="muted small" href="/roster">← Roster</a><h1>${seat ? "Onboard into open seat" : "Add a person"}</h1>
+      <p class="muted">Capture the essentials for headcount &amp; cost. ${seat ? "This fills the open seat and records the actual compensation." : "This creates a filled seat for the new hire."} (No sensitive personal data — that belongs in payroll/HRIS.)</p>
+    </div>
+    ${errorList(errors)}
+    <form method="post" action="/roster/new">
+      ${csrfField(ctx)}
+      <section class="card">
+        <h2>Person</h2>
+        <div class="formgrid">
+          <label>First name<input name="first_name" value="${esc(form.first_name || "")}"></label>
+          <label>Last name<input name="last_name" value="${esc(form.last_name || "")}"></label>
+        </div>
+        <label>Or full name <span class="hint">if you don't have it split</span><input name="name" value="${esc(form.name || "")}"></label>
+        <label>Employee ID <span class="hint">leave blank to auto-generate</span><input name="employee_id" value="${esc(form.employee_id || "")}"></label>
+      </section>
+      <section class="card">
+        <h2>Role</h2>
+        ${deptField}
+        <label>Job title<input name="job_title" value="${esc(form.job_title || (seat ? seat.title : "") || "")}"></label>
+        <div class="formgrid">
+          <label>Employment type<select name="employee_type"><option value="">—</option>${TYPES.map((t) => html`<option value="${t}" ${opt(t, form.employee_type)}>${t}</option>`)}</select></label>
+          <label>Start date<input name="start_date" type="date" value="${esc(form.start_date || "")}"></label>
+        </div>
+        <label>Manager<input name="manager" value="${esc(form.manager || "")}"></label>
+      </section>
+      <section class="card">
+        <h2>Compensation</h2>
+        <div class="formgrid">
+          <label>Amount<input name="comp_amount" value="${esc(form.comp_amount || "")}" placeholder="e.g. 150000 or 95k" required></label>
+          <label>Per<select name="comp_unit">${UNITS.map(([v, l]) => html`<option value="${v}" ${opt(v, form.comp_unit)}>${l}</option>`)}</select></label>
+        </div>
+        <p class="muted small">Converted to an annual, fully-loaded figure for budgets and runway.</p>
+      </section>
+      <button class="btn" type="submit">${seat ? "Onboard &amp; fill seat" : "Add person"}</button>
+    </form>`;
+  return renderPage(ctx, { title: seat ? "Onboard" : "Add person", body, active: "roster" });
 }
 
 // small view helpers

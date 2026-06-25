@@ -8,7 +8,7 @@ import { createRequest, getRequest, listRequests, statusHistory, setStatus } fro
 import { departmentReconciliation, departmentUsage, getEnvelope } from "../repos/budgets.js";
 import { listDepartments, getDepartment } from "../repos/departments.js";
 import { getSettings } from "../repos/settings.js";
-import { createSeat } from "../repos/seats.js";
+import { createSeat, getSeat } from "../repos/seats.js";
 import { logAudit } from "../repos/audit.js";
 
 const STATUS_PILL = {
@@ -231,6 +231,8 @@ function detailPage(ctx, { req, errors }) {
       <div>${raw(STATUS_PILL[req.status] || req.status)}</div>
     </div>
     ${errorList(errors)}
+    ${req.status === "approved" && req.seat_id && getSeat(ctx.db, req.seat_id)?.status === "open"
+      ? html`<div class="reveal">This request is approved and its seat is open. <a href="/roster/new?seat=${req.seat_id}"><b>Onboard the hire →</b></a></div>` : ""}
     <div class="grid2">
       <section class="card">
         <h2>Justification &amp; incremental benefit</h2>

@@ -298,4 +298,10 @@ export const MIGRATIONS = [
       db.exec(`ALTER TABLE departments ADD COLUMN function_category TEXT;`);
     },
   },
+  {
+    name: "2026_06_24_010_employee_start_date",
+    up(db) {
+      db.exec(`ALTER TABLE employees ADD COLUMN start_date TEXT;`);
+    },
+  },
 ];
