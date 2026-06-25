@@ -82,3 +82,22 @@ export function headcountRollup(db, scope = {}) {
     .sort((a, b) => b.approved - a.approved);
   return { departments, totals: countSeats(rows) };
 }
+
+/** Create a filled seat for every active employee that lacks one (sync/backfill). */
+export function backfillSeats(db) {
+  const mult = db.prepare("SELECT loaded_cost_multiplier FROM workspace_settings WHERE workspace_id=1").get()?.loaded_cost_multiplier ?? 1.3;
+  const rows = db.prepare(`SELECT e.id, e.department_id, e.job_title, e.employment_status, c.annual_salary
+                             FROM employees e LEFT JOIN compensation c ON c.employee_id = e.id
+                            WHERE e.seat_id IS NULL`).all();
+  const ins = db.prepare("INSERT INTO seats (department_id, title, status, occupant_employee_id, loaded_cost_estimate, opened_at) VALUES (?,?, 'filled', ?, ?, datetime('now'))");
+  const link = db.prepare("UPDATE employees SET seat_id = ? WHERE id = ?");
+  let made = 0;
+  for (const e of rows) {
+    if (String(e.employment_status || "").toLowerCase() === "inactive") continue;
+    const loaded = e.annual_salary != null ? Math.round(e.annual_salary * mult) : null;
+    const info = ins.run(e.department_id, e.job_title, e.id, loaded);
+    link.run(info.lastInsertRowid, e.id);
+    made++;
+  }
+  return made;
+}

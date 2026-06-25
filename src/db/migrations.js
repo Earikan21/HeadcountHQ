@@ -1,3 +1,4 @@
+import { backfillSeats } from "../repos/seats.js";
 /**
  * Ordered list of schema migrations. Each has a unique, sortable `name` and an
  * `up(db)` that applies it. Never edit an already-applied migration — add a new
@@ -281,6 +282,14 @@ export const MIGRATIONS = [
         ALTER TABLE workspace_settings ADD COLUMN company_headcount_budget INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE workspace_settings ADD COLUMN company_money_budget     REAL    NOT NULL DEFAULT 0;
       `);
+    },
+  },
+  {
+    name: "2026_06_24_008_backfill_seats",
+    up(db) {
+      // Existing rosters imported before the seat model get filled seats now,
+      // so active/approved headcount reflects them everywhere.
+      backfillSeats(db);
     },
   },
 ];

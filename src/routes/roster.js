@@ -9,7 +9,7 @@ import {
   createBatch, getBatch, updateBatchMapping, setBatchHeaderRow, setBatchStatus, listBatches,
   upsertDepartmentByName, upsertEmployee, listEmployees,
 } from "../repos/roster.js";
-import { ensureSeatForEmployee } from "../repos/seats.js";
+import { ensureSeatForEmployee, vacateSeat } from "../repos/seats.js";
 import { getSettings } from "../repos/settings.js";
 import { loadedCost as loadedCostFn } from "../domain/philosophy.js";
 
@@ -116,7 +116,8 @@ export function registerRosterRoutes(router) {
     const batch = getBatch(ctx.db, Number(ctx.params.id));
     if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
     const built = R.buildCanonical(batch.rawRows, batch.mapping);
-    const mult = getSettings(ctx.db).loaded_cost_multiplier;
+    const settingsRow = getSettings(ctx.db);
+    const mult = settingsRow.loaded_cost_multiplier;
     let committed = 0;
     for (const row of built.rows) {
       if (!row._ok) continue;
@@ -124,6 +125,10 @@ export function registerRosterRoutes(router) {
       const empId = upsertEmployee(ctx.db, row, deptId);
       if (row._status !== "inactive") {
         ensureSeatForEmployee(ctx.db, { employeeId: empId, departmentId: deptId, title: row.job_title, loadedCost: loadedCostFn(row.annual_salary, mult) });
+      } else {
+        // now inactive in the roster — release their seat per the workspace policy
+        const cur = ctx.db.prepare("SELECT seat_id FROM employees WHERE id=?").get(empId);
+        if (cur && cur.seat_id) vacateSeat(ctx.db, cur.seat_id, settingsRow, ctx.user.id);
       }
       committed++;
     }
