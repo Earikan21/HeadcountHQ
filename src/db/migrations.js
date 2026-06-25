@@ -347,4 +347,16 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_24_012_sales_capacity",
+    up(db) {
+      db.exec(`
+        ALTER TABLE financials ADD COLUMN bookings_per_rep         REAL    NOT NULL DEFAULT 800000;
+        ALTER TABLE financials ADD COLUMN sales_ramp_months        INTEGER NOT NULL DEFAULT 5;
+        ALTER TABLE financials ADD COLUMN attainment_conservative_pct REAL NOT NULL DEFAULT 60;
+        ALTER TABLE financials ADD COLUMN attainment_base_pct         REAL NOT NULL DEFAULT 70;
+        ALTER TABLE financials ADD COLUMN attainment_aggressive_pct   REAL NOT NULL DEFAULT 80;
+      `);
+    },
+  },
 ];

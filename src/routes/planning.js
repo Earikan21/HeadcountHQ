@@ -20,7 +20,6 @@ function buildProjection(db, scenarioId) {
       start_month: it.start_month || 0,
       pace: it.pace || "even",
       cost_per_hire: (it.cost_per_hire != null ? it.cost_per_hire : d.defaultCostPerHire) || 0,
-      productivity_per_head: it.productivity_per_head || 0,
       outcome: it.outcome || "base",
     };
   });
@@ -66,7 +65,6 @@ export function registerPlanningRoutes(router) {
       upsertItem(ctx.db, sc.id, id, {
         new_hires: ctx.body[`nh_${id}`], start_month: ctx.body[`sm_${id}`], pace: ctx.body[`pace_${id}`],
         cost_per_hire: ctx.body[`cph_${id}`] === "" ? null : ctx.body[`cph_${id}`],
-        productivity_per_head: ctx.body[`prod_${id}`] === "" ? null : ctx.body[`prod_${id}`],
         outcome: ctx.body[`out_${id}`],
       });
     }
@@ -107,7 +105,7 @@ function indexPage(ctx, errors) {
       <td class="right">${s.totalNewHires}</td>
       <td class="right">${money(s.addedAnnualCost)}</td>
       <td class="right">${s.runwayMonths == null ? raw(`<span class="ok-txt">> ${s.horizon}mo</span>`) : s.runwayMonths + " mo"}</td>
-      <td class="right">${s.output.base ? money(s.output.base) : "—"}</td>
+      <td class="right">${s.revenue.base ? money(s.revenue.base) : "—"}</td>
     </tr>`) : raw('<tr><td colspan="5" class="muted">No scenarios yet.</td></tr>');
 
   const body = html`
@@ -124,15 +122,18 @@ function indexPage(ctx, errors) {
           ${numField("revenue_growth_pct", "Revenue growth", f.revenue_growth_pct, 'step="any"', "% / yr")}
           ${numField("comp_inflation_pct", "Comp inflation", f.comp_inflation_pct, 'step="any"', "% / yr")}
           ${numField("horizon_months", "Planning horizon", f.horizon_months, 'min="1" step="1"', "months")}
-          ${numField("productivity_conservative_pct", "Conservative outcome", f.productivity_conservative_pct, 'min="0" step="any"', "% of base")}
-          ${numField("productivity_aggressive_pct", "Aggressive outcome", f.productivity_aggressive_pct, 'min="0" step="any"', "% of base")}
+          ${numField("bookings_per_rep", "Bookings / ramped rep", f.bookings_per_rep, 'min="0" step="any"', "$ / yr")}
+          ${numField("sales_ramp_months", "Sales ramp", f.sales_ramp_months, 'min="1" step="1"', "months")}
+          ${numField("attainment_conservative_pct", "Attainment conservative", f.attainment_conservative_pct, 'min="0" step="any"', "%")}
+          ${numField("attainment_base_pct", "Attainment base", f.attainment_base_pct, 'min="0" step="any"', "%")}
+          ${numField("attainment_aggressive_pct", "Attainment aggressive", f.attainment_aggressive_pct, 'min="0" step="any"', "%")}
         </div>
         <button class="btn" type="submit">Save assumptions</button>
       </form>
     </section>
     <section class="card">
       <div class="row-between"><h2>Scenarios</h2></div>
-      <table class="table"><thead><tr><th>Scenario</th><th class="right">New hires</th><th class="right">Added cost</th><th class="right">Runway</th><th class="right">Output (base)</th></tr></thead><tbody>${scRows}</tbody></table>
+      <table class="table"><thead><tr><th>Scenario</th><th class="right">New hires</th><th class="right">Added cost</th><th class="right">Runway</th><th class="right">Bookings (base)</th></tr></thead><tbody>${scRows}</tbody></table>
       <form method="post" action="/planning/scenarios" class="inline" style="margin-top:12px">
         ${csrfField(ctx)}
         <input name="name" placeholder="New scenario name" required style="max-width:240px;display:inline-block">
@@ -151,15 +152,14 @@ function scenarioPage(ctx, sc) {
     const it = itemsMap[d.id] || {};
     const sel = (v, cur) => v === (cur || (v === "even" || v === "base" ? cur || v : cur)) ? "" : "";
     return html`<tr>
-      <td><b>${d.name}</b><div class="sub">${d.currentHeadcount} now</div></td>
+      <td><b>${d.name}</b>${d.category === "sm" ? raw(' <span class="pill ok2">Sales</span>') : ""}<div class="sub">${d.currentHeadcount} now</div></td>
       <td><input class="tcell" type="number" min="0" step="1" name="nh_${d.id}" value="${it.new_hires || 0}"></td>
       <td><input class="tcell" type="number" min="0" step="1" name="sm_${d.id}" value="${it.start_month || 0}"></td>
       <td><select name="pace_${d.id}">${PACES.map((p) => html`<option value="${p}" ${(it.pace || "even") === p ? raw("selected") : ""}>${PACE_LABELS[p]}</option>`)}</select></td>
       <td><input class="tcell wide" type="number" min="0" step="any" name="cph_${d.id}" value="${it.cost_per_hire ?? ""}" placeholder="${d.defaultCostPerHire ?? ""}"></td>
-      <td><input class="tcell wide" type="number" min="0" step="any" name="prod_${d.id}" value="${it.productivity_per_head ?? ""}" placeholder="optional"></td>
       <td><select name="out_${d.id}">${OUTCOMES.map((o) => html`<option value="${o}" ${(it.outcome || "base") === o ? raw("selected") : ""}>${o}</option>`)}</select></td>
     </tr>`;
-  }) : raw('<tr><td colspan="7" class="muted">Add departments first.</td></tr>');
+  }) : raw('<tr><td colspan="6" class="muted">Add departments first.</td></tr>');
 
   // condensed monthly view: every 3rd month
   const sampled = proj.months.filter((m) => m.month % 3 === 0 || m.month === proj.months.length - 1);
@@ -180,15 +180,15 @@ function scenarioPage(ctx, sc) {
       <div class="kpi"><div class="lbl">Runway</div><div class="val ${s.runwayMonths != null && s.runwayMonths < 12 ? "bad" : ""}">${s.runwayMonths == null ? "> " + s.horizon + " mo" : s.runwayMonths + " mo"}</div></div>
       <div class="kpi"><div class="lbl">End headcount</div><div class="val">${s.endHeadcount}<span class="lbl"> from ${currentHeads}</span></div></div>
       <div class="kpi"><div class="lbl">Added annual cost</div><div class="val">${money(s.addedAnnualCost)}</div></div>
-      <div class="kpi"><div class="lbl">Projected output</div><div class="val">${s.output.selected ? money(s.output.selected) : "—"}</div><div class="lbl">${s.output.base ? "range " + moneyShort(s.output.conservative) + "–" + moneyShort(s.output.aggressive) : "set productivity"}</div></div>
+      <div class="kpi"><div class="lbl">Incremental bookings / yr</div><div class="val">${s.revenue.selected ? money(s.revenue.selected) : "—"}</div><div class="lbl">${s.revenue.hasSales ? "range " + moneyShort(s.revenue.conservative) + "–" + moneyShort(s.revenue.aggressive) : "add Sales hires"}</div></div>
     </div>
     <form method="post" action="/planning/scenarios/${sc.id}/items">
       ${csrfField(ctx)}
       <section class="card">
         <h2>Per-department plan</h2>
-        <p class="muted small">Set a hiring schedule and (optionally) a productivity-per-head with an outcome — each is selectable per department. Cost/hire defaults to the team's salary band.</p>
+        <p class="muted small">Set a hiring schedule and a case per department. The tool derives revenue: Sales departments ramp new reps into bookings (case = quota attainment); other functions are cost centers. Cost/hire defaults to the team band.</p>
         <table class="table">
-          <thead><tr><th>Department</th><th>New hires</th><th>Start month</th><th>Schedule</th><th>Cost / hire</th><th>Output / head</th><th>Outcome</th></tr></thead>
+          <thead><tr><th>Department</th><th>New hires</th><th>Start month</th><th>Schedule</th><th>Cost / hire</th><th>Case</th></tr></thead>
           <tbody>${itemRows}</tbody>
         </table>
         ${states.length ? html`<button class="btn" type="submit" style="margin-top:12px">Save plan</button>` : ""}
@@ -203,7 +203,7 @@ function scenarioPage(ctx, sc) {
         <h2>Plan vs. actual</h2>
         <p>Headcount: <b>${currentHeads}</b> today → <b>${s.endHeadcount}</b> planned (<b>+${s.totalNewHires}</b> hires).</p>
         <p>Monthly net burn ends at <b>${money(s.endMonthlyNetBurn)}</b>; cash at horizon <b>${money(s.endCash)}</b>.</p>
-        ${s.output.base ? html`<p>Output sensitivity: conservative <b>${money(s.output.conservative)}</b> · base <b>${money(s.output.base)}</b> · aggressive <b>${money(s.output.aggressive)}</b>.</p>` : html`<p class="muted small">Add a productivity-per-head to a department to see output sensitivity.</p>`}
+        ${s.revenue.hasSales ? html`<p>Incremental bookings sensitivity: conservative <b>${money(s.revenue.conservative)}</b> · base <b>${money(s.revenue.base)}</b> · aggressive <b>${money(s.revenue.aggressive)}</b>.</p>` : html`<p class="muted small">Plan hires on a Sales &amp; Marketing department (set its function on Departments) to model revenue. Other functions are cost centers.</p>`}
       </section>
     </div>`;
   return renderPage(ctx, { title: sc.name, body, active: "planning" });

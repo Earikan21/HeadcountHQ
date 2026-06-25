@@ -10,11 +10,13 @@ export function setFinancials(db, f, userId) {
   const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : d; };
   db.prepare(
     `UPDATE financials SET cash_balance=?, monthly_burn=?, monthly_revenue=?, revenue_growth_pct=?,
-       comp_inflation_pct=?, horizon_months=?, productivity_conservative_pct=?, productivity_aggressive_pct=?,
+       comp_inflation_pct=?, horizon_months=?, bookings_per_rep=?, sales_ramp_months=?,
+       attainment_conservative_pct=?, attainment_base_pct=?, attainment_aggressive_pct=?,
        updated_by=?, updated_at=datetime('now') WHERE workspace_id=1`
   ).run(num(f.cash_balance), num(f.monthly_burn), num(f.monthly_revenue), num(f.revenue_growth_pct),
         num(f.comp_inflation_pct), Math.max(1, Math.round(num(f.horizon_months, 24))),
-        num(f.productivity_conservative_pct, 70), num(f.productivity_aggressive_pct, 135), userId);
+        num(f.bookings_per_rep, 800000), Math.max(1, Math.round(num(f.sales_ramp_months, 5))),
+        num(f.attainment_conservative_pct, 60), num(f.attainment_base_pct, 70), num(f.attainment_aggressive_pct, 80), userId);
 }
 
 export function createScenario(db, { name, description = "", createdBy }) {
@@ -48,13 +50,13 @@ export function upsertItem(db, scenarioId, deptId, it) {
 /** Current state per department for the engine + a default cost-per-hire. */
 export function deptStates(db) {
   const rows = db.prepare(`
-    SELECT d.id, d.name,
+    SELECT d.id, d.name, d.function_category AS category,
       (SELECT COUNT(*) FROM seats s WHERE s.department_id=d.id AND s.status='filled') AS currentHeadcount,
       (SELECT COALESCE(SUM(loaded_cost_estimate),0) FROM seats s WHERE s.department_id=d.id AND s.status='filled') AS currentAnnualCost
     FROM departments d ORDER BY d.name`).all();
   return rows.map((r) => {
     const band = deptCostBand(db, r.id);
     const defaultCostPerHire = band ? Math.round((band.low + band.high) / 2) : null;
-    return { id: r.id, name: r.name, currentHeadcount: r.currentHeadcount, currentMonthlyCost: r.currentAnnualCost / 12, defaultCostPerHire };
+    return { id: r.id, name: r.name, category: r.category, currentHeadcount: r.currentHeadcount, currentMonthlyCost: r.currentAnnualCost / 12, defaultCostPerHire };
   });
 }

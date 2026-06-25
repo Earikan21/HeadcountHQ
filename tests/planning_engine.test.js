@@ -43,28 +43,54 @@ test("projectScenario: hiring adds time-phased cost and shortens runway", () => 
   assert.equal(base.summary.endHeadcount, 12);
 });
 
-test("projectScenario: productivity outcomes give a sensitivity band", () => {
+test("sales hires ramp into incremental bookings; the case sets attainment", () => {
   const r = projectScenario({
-    financials: { cash_balance: 5000000, horizon_months: 12, productivity_conservative_pct: 70, productivity_aggressive_pct: 130 },
-    departments: [{ id: 1, name: "Sales", currentHeadcount: 4, currentMonthlyCost: 0 }],
-    items: [{ department_id: 1, new_hires: 2, start_month: 0, pace: "all_at_once", productivity_per_head: 500000, outcome: "base" }],
+    financials: { cash_balance: 10000000, horizon_months: 12, monthly_revenue: 0,
+      bookings_per_rep: 1200000, sales_ramp_months: 1,
+      attainment_conservative_pct: 50, attainment_base_pct: 100, attainment_aggressive_pct: 150 },
+    departments: [{ id: 1, name: "Sales", category: "sm", currentHeadcount: 0, currentMonthlyCost: 0 }],
+    items: [{ department_id: 1, new_hires: 2, start_month: 0, pace: "all_at_once", cost_per_hire: 0, outcome: "base" }],
   });
-  // end heads = 6, base output = 6 * 500k = 3.0M
-  assert.equal(r.summary.output.base, 3000000);
-  assert.equal(r.summary.output.conservative, 2100000); // x0.7
-  assert.equal(r.summary.output.aggressive, 3900000);   // x1.3
-  assert.equal(r.byDept[0].output, 3000000);            // selected outcome = base
+  assert.equal(r.summary.revenue.base, 2400000);        // 2 reps x 1.2M x 100%
+  assert.equal(r.summary.revenue.conservative, 1200000); // x50%
+  assert.equal(r.summary.revenue.aggressive, 3600000);   // x150%
+  assert.equal(r.summary.revenue.selected, 2400000);     // chosen case = base
+  assert.ok(r.summary.revenue.hasSales);
 });
 
-test("projectScenario: per-department selected outcome drives company selected output", () => {
+test("non-sales departments generate no modeled revenue (cost centers)", () => {
   const r = projectScenario({
-    financials: { cash_balance: 1, horizon_months: 12, productivity_conservative_pct: 50, productivity_aggressive_pct: 200 },
-    departments: [{ id: 1, name: "A", currentHeadcount: 1, currentMonthlyCost: 0 }, { id: 2, name: "B", currentHeadcount: 1, currentMonthlyCost: 0 }],
+    financials: { cash_balance: 1, horizon_months: 6, bookings_per_rep: 1000000 },
+    departments: [{ id: 1, name: "Eng", category: "rnd", currentHeadcount: 0, currentMonthlyCost: 0 }],
+    items: [{ department_id: 1, new_hires: 5, start_month: 0, pace: "all_at_once", outcome: "aggressive" }],
+  });
+  assert.equal(r.summary.revenue.base, 0);
+  assert.equal(r.byDept[0].revenueImpact, null);
+});
+
+test("each Sales department's case drives the selected revenue", () => {
+  const r = projectScenario({
+    financials: { cash_balance: 1, horizon_months: 12, bookings_per_rep: 1000000, sales_ramp_months: 1,
+      attainment_conservative_pct: 50, attainment_base_pct: 100, attainment_aggressive_pct: 200 },
+    departments: [
+      { id: 1, name: "SMB", category: "sm", currentHeadcount: 0, currentMonthlyCost: 0 },
+      { id: 2, name: "Ent", category: "sm", currentHeadcount: 0, currentMonthlyCost: 0 },
+    ],
     items: [
-      { department_id: 1, new_hires: 0, start_month: 0, pace: "all_at_once", productivity_per_head: 100000, outcome: "conservative" },
-      { department_id: 2, new_hires: 0, start_month: 0, pace: "all_at_once", productivity_per_head: 100000, outcome: "aggressive" },
+      { department_id: 1, new_hires: 1, start_month: 0, pace: "all_at_once", outcome: "conservative" }, // 500k
+      { department_id: 2, new_hires: 1, start_month: 0, pace: "all_at_once", outcome: "aggressive" },     // 2M
     ],
   });
-  // A: 1*100k*0.5 = 50k ; B: 1*100k*2.0 = 200k ; selected = 250k
-  assert.equal(r.summary.output.selected, 250000);
+  assert.equal(r.summary.revenue.selected, 2500000);
+});
+
+test("sales ramp delays bookings (revenue builds over months)", () => {
+  const r = projectScenario({
+    financials: { cash_balance: 10000000, horizon_months: 6, monthly_revenue: 0,
+      bookings_per_rep: 1200000, sales_ramp_months: 3, attainment_base_pct: 100 },
+    departments: [{ id: 1, name: "Sales", category: "sm", currentHeadcount: 0, currentMonthlyCost: 0 }],
+    items: [{ department_id: 1, new_hires: 1, start_month: 0, pace: "all_at_once", outcome: "base" }],
+  });
+  assert.ok(r.months[0].revenue < r.months[2].revenue, "ramps up");
+  assert.equal(r.months[2].revenue, 100000); // fully ramped monthly = 1.2M/12
 });
