@@ -2,7 +2,8 @@ import { html, raw, esc } from "../html.js";
 import { renderPage, csrfField, errorList, money } from "../views/ui.js";
 import { requireAuth, requirePermission } from "../middleware.js";
 import { canImportRoster, compVisibility, canViewCompTotals, departmentScope } from "../authz.js";
-import { parseMatrix, detectHeaderRow, matrixToRows, toCsv } from "../domain/csv.js";
+import { detectHeaderRow, matrixToRows, toCsv } from "../domain/csv.js";
+import { parseUpload } from "../domain/adapters.js";
 import * as R from "../domain/roster.js";
 import { logAudit } from "../repos/audit.js";
 import {
@@ -104,7 +105,9 @@ export function registerRosterRoutes(router) {
     if (!file || !file.data || !file.data.length) {
       return ctx.html(400, uploadPage(ctx, { errors: ["Please choose a CSV file to upload."] }));
     }
-    const matrix = parseMatrix(file.data.toString("utf8"));
+    const parsed = parseUpload(file.filename, file.data);
+    if (parsed.error) return ctx.html(400, uploadPage(ctx, { errors: [parsed.error] }));
+    const matrix = parsed.matrix;
     if (matrix.length < 2) {
       return ctx.html(400, uploadPage(ctx, { errors: ["That file has no readable rows. Export your roster as CSV and try again."] }));
     }

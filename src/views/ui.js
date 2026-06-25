@@ -22,37 +22,34 @@ export const moneyShort = (n) => {
 export const moneyRange = (a, b) =>
   a == null && b == null ? "—" : `${money(a)} – ${money(b)}`;
 
-/** Build the nav links appropriate to the current user. */
-function navFor(user, active) {
-  if (!user) return "";
-  const item = (href, label, key) =>
-    `<a href="${href}" class="${active === key ? "on" : ""}">${esc(label)}</a>`;
-  const links = [item("/", "Dashboard", "dashboard")];
-  links.push(item("/roster", "Roster", "roster"));
-  links.push(item("/headcount", "Headcount", "headcount"));
-  links.push(item("/requests", "Requests", "requests"));
-  if (user.role !== "manager") { links.push(item("/budgets", "Budgets", "budgets")); links.push(item("/planning", "Planning", "planning")); }
-  if (user.role === "finance_admin") {
-    links.push(item("/departments", "Departments", "departments"));
-    links.push(item("/accounts", "Accounts", "accounts"));
-    links.push(item("/philosophy", "Philosophy", "philosophy"));
-    links.push(item("/audit", "Audit", "audit"));
+/** Grouped navigation appropriate to the current user. */
+function navGroups(user, active) {
+  if (!user) return [];
+  const I = (href, label, key) => ({ href, label, on: active === key });
+  const groups = [{ label: "Overview", items: [I("/", "Dashboard", "dashboard")] }];
+
+  const people = [I("/roster", "Roster", "roster"), I("/headcount", "Headcount", "headcount"), I("/org", "Org chart", "org"), I("/requests", "Requests", "requests")];
+  if (user.role === "finance_admin") people.push(I("/departments", "Departments", "departments"));
+  groups.push({ label: "People", items: people });
+
+  if (user.role !== "manager") {
+    const plan = [I("/budgets", "Budgets", "budgets"), I("/planning", "Planning", "planning")];
+    if (user.role === "finance_admin") plan.push(I("/philosophy", "Philosophy", "philosophy"));
+    groups.push({ label: "Planning", items: plan });
   }
-  return links.join("");
+  if (user.role === "finance_admin") groups.push({ label: "Admin", items: [I("/accounts", "Accounts", "accounts"), I("/audit", "Audit", "audit")] });
+  return groups;
 }
 
-/** Render a full page. `body` must be trusted HTML (built with `html`). */
+/** Render a full page in the app shell (sidebar + content). `body` is trusted HTML. */
 export function renderPage(ctx, { title, body, active = "", flash = "" }) {
   const user = ctx.user;
   const flashMsg = flash || ctx.query.get("msg") || "";
-  const userbox = user
-    ? html`<div class="userbox">
-        <span class="uname">${user.name}</span>
-        <span class="urole">${ROLE_LABELS[user.role] || user.role}</span>
-        <a class="signout" href="/account">Settings</a>
-        <form method="post" action="/logout" class="inline">${csrfField(ctx)}<button class="linklike" type="submit">Sign out</button></form>
-      </div>`
-    : "";
+  const groups = navGroups(user, active);
+  const navHtml = groups.map((g) => html`<div class="nav-group">
+      <div class="nav-group-label">${g.label}</div>
+      ${g.items.map((it) => raw(`<a href="${it.href}" class="nav-link ${it.on ? "on" : ""}">${esc(it.label)}</a>`))}
+    </div>`);
 
   return html`<!DOCTYPE html>
 <html lang="en">
@@ -63,15 +60,25 @@ export function renderPage(ctx, { title, body, active = "", flash = "" }) {
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand"><span class="logo">H</span> Headcount HQ</div>
-    <nav class="topnav">${raw(navFor(user, active))}</nav>
-    ${userbox}
-  </header>
-  <main class="wrap">
-    ${flashMsg ? html`<div class="flash">${flashMsg}</div>` : ""}
-    ${raw(body)}
-  </main>
+  <div class="app">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="logo">H</span> <span class="brand-name">Headcount HQ</span></a>
+      <nav class="side-nav">${navHtml}</nav>
+      <div class="side-user">
+        <div class="su-id"><span class="su-name">${user ? user.name : ""}</span><span class="su-role">${user ? (ROLE_LABELS[user.role] || user.role) : ""}</span></div>
+        <div class="su-actions">
+          <a href="/account">Settings</a>
+          <form method="post" action="/logout" class="inline">${csrfField(ctx)}<button class="linklike" type="submit">Sign out</button></form>
+        </div>
+      </div>
+    </aside>
+    <main class="content">
+      <div class="wrap">
+        ${flashMsg ? html`<div class="flash">${flashMsg}</div>` : ""}
+        ${raw(body)}
+      </div>
+    </main>
+  </div>
 </body>
 </html>`;
 }
