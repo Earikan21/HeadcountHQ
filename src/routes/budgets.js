@@ -115,7 +115,7 @@ function page(ctx, mode) {
             <td><b>${r.name}</b></td>
             <td class="right">${money(r.money.committed)}${r.money.pending ? html` <span class="muted">+${money(r.money.pending)}</span>` : ""}</td>
             <td>
-              <input class="tcell wide" type="number" min="0" step="1000" name="money_${r.id}" value="${r.effMoney}">
+              <input class="tcell wide" type="number" min="0" step="any" name="money_${r.id}" value="${r.effMoney}">
               ${implied ? html`<div class="exp on">headcount budget implies +${moneyShort(implied.low)}–${moneyShort(implied.high)}</div>` : ""}
             </td>
             <td>${bar(r.money.committed, r.effMoney, r.money.over > 0)}</td>
@@ -126,7 +126,7 @@ function page(ctx, mode) {
         ${csrfField(ctx)}<input type="hidden" name="mode" value="money">
         <section class="card">
           <h2>Company money budget</h2>
-          <label>Total annual, fully-loaded, company-wide<input type="number" min="0" step="1000" name="company_money" value="${cap.money}" style="max-width:240px"></label>
+          <label>Total annual, fully-loaded, company-wide<input type="number" min="0" step="any" name="company_money" value="${cap.money}" style="max-width:240px"></label>
         </section>
         <div class="kpis">
           <div class="kpi"><div class="lbl">Committed spend</div><div class="val">${money(company.money.committed)}</div></div>

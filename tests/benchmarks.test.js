@@ -30,3 +30,9 @@ test("suggested department targets shift by company phase", () => {
   assert.ok(early["Engineering"] > scale["Engineering"], "Engineering suggested higher when early-stage");
   assert.ok(scale["Sales"] > early["Sales"], "Sales suggested higher at scale");
 });
+
+test("an assigned function category overrides name-guessing", () => {
+  const guessed = suggestDepartmentTargets([{ name: "Studio" }, { name: "Sales" }], "mid", "general");
+  const assigned = suggestDepartmentTargets([{ name: "Studio", category: "rnd" }, { name: "Sales" }], "mid", "general");
+  assert.ok(assigned["Studio"] > guessed["Studio"], "assigning R&D raises an unrecognised dept's share");
+});

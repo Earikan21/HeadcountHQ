@@ -9,6 +9,11 @@ export const getDepartment = (db, id) =>
 export const getDepartmentByName = (db, name) =>
   db.prepare("SELECT * FROM departments WHERE name = ? COLLATE NOCASE").get(String(name || "").trim());
 
+export function setDepartmentCategory(db, id, category) {
+  const valid = ["rnd", "sm", "ga", "cs", "other"].includes(category) ? category : null;
+  db.prepare("UPDATE departments SET function_category = ? WHERE id = ?").run(valid, id);
+}
+
 export function createDepartment(db, { name, parentId = null, managerUserId = null }) {
   const info = db.prepare(
     "INSERT INTO departments (name, parent_id, manager_user_id) VALUES (?, ?, ?)"

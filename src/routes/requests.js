@@ -170,8 +170,8 @@ function formPage(ctx, { form, errors }) {
           <label>Target start (month)<input name="target_start_month" type="month" value="${esc(form.target_start_month || "")}"></label>
         </div>
         <div class="formgrid">
-          <label>Comp band — min<input name="band_min" type="number" min="0" step="1000" value="${esc(form.band_min || "")}"></label>
-          <label>Comp band — max<input name="band_max" type="number" min="0" step="1000" value="${esc(form.band_max || "")}"></label>
+          <label>Comp band — min<input name="band_min" type="number" min="0" step="any" value="${esc(form.band_min || "")}"></label>
+          <label>Comp band — max<input name="band_max" type="number" min="0" step="any" value="${esc(form.band_max || "")}"></label>
         </div>
       </section>
       <section class="card">
@@ -190,7 +190,7 @@ function formPage(ctx, { form, errors }) {
               <option value="revenue_driver" ${form.expected_value_basis === "revenue_driver" ? raw("selected") : ""}>Revenue driver</option>
             </select>
           </label>
-          <label>Expected $ value / year <span class="hint">optional</span><input name="expected_value_amount" type="number" min="0" step="1000" value="${esc(form.expected_value_amount || "")}"></label>
+          <label>Expected $ value / year <span class="hint">optional</span><input name="expected_value_amount" type="number" min="0" step="any" value="${esc(form.expected_value_amount || "")}"></label>
         </div>
       </section>
       <button class="btn" type="submit">Submit request</button>

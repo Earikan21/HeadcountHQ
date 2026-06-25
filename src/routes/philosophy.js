@@ -57,9 +57,9 @@ export function registerPhilosophyRoutes(router) {
   // Seed a suggested starting balance from the function benchmarks
   router.post("/philosophy/targets/suggest", (ctx) => {
     if (!requirePermission(ctx, canManageSettings)) return;
-    const names = listDepartments(ctx.db).map((d) => d.name);
     const s = getSettings(ctx.db);
-    const sug = P.suggestDepartmentTargets(names, s.company_phase, s.industry);
+    const depts = listDepartments(ctx.db).map((d) => ({ name: d.name, category: d.function_category }));
+    const sug = P.suggestDepartmentTargets(depts, s.company_phase, s.industry);
     saveDepartmentTargets(ctx.db, sug, "default", ctx.user.id);
     ctx.redirect("/philosophy?msg=Suggested+balance+applied+-+now+edit+freely");
   });

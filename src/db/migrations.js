@@ -292,4 +292,10 @@ export const MIGRATIONS = [
       backfillSeats(db);
     },
   },
+  {
+    name: "2026_06_24_009_dept_category",
+    up(db) {
+      db.exec(`ALTER TABLE departments ADD COLUMN function_category TEXT;`);
+    },
+  },
 ];

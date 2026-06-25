@@ -5,9 +5,12 @@ import { canManageDepartments } from "../authz.js";
 import {
   listDepartments, listDepartmentsWithCounts, getDepartment, getDepartmentByName,
   createDepartment, renameDepartment, moveEmployees, mergeDepartments,
-  deleteDepartmentIfEmpty, listEmployeesInDepartment,
+  deleteDepartmentIfEmpty, listEmployeesInDepartment, setDepartmentCategory,
 } from "../repos/departments.js";
+import { FUNCTION_CATEGORIES } from "../data/benchmarks.js";
 import { logAudit } from "../repos/audit.js";
+
+const CATEGORY_OPTIONS = [["", "Auto (by name)"], ...FUNCTION_CATEGORIES];
 
 const ids = (v) => [].concat(v || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
 
@@ -25,6 +28,17 @@ export function registerDepartmentRoutes(router) {
     const dept = createDepartment(ctx.db, { name, parentId: ctx.body.parent_id ? Number(ctx.body.parent_id) : null });
     logAudit(ctx.db, { userId: ctx.user.id, action: "department.created", entity: "department", entityId: dept.id });
     ctx.redirect("/departments?msg=Department+added");
+  });
+
+  // ---- assign function categories (drives the suggested target balance) ----
+  router.post("/departments/categories", (ctx) => {
+    if (!requirePermission(ctx, canManageDepartments)) return;
+    for (const d of listDepartments(ctx.db)) {
+      const v = ctx.body[`cat_${d.id}`];
+      if (v !== undefined) setDepartmentCategory(ctx.db, d.id, v);
+    }
+    logAudit(ctx.db, { userId: ctx.user.id, action: "department.categories", entity: "department" });
+    ctx.redirect("/departments?msg=Function+categories+saved");
   });
 
   // ---- manage a single department ----
@@ -104,19 +118,26 @@ export function registerDepartmentRoutes(router) {
 function listPage(ctx, { errors }) {
   const depts = listDepartmentsWithCounts(ctx.db);
   const byId = new Map(depts.map((d) => [d.id, d.name]));
+  const catSelect = (d) => html`<select name="cat_${d.id}">${CATEGORY_OPTIONS.map(([k, lbl]) => html`<option value="${k}" ${(d.function_category || "") === k ? raw("selected") : ""}>${lbl}</option>`)}</select>`;
   const rows = depts.length ? depts.map((d) => html`<tr>
       <td><b>${d.name}</b></td>
       <td>${d.parent_id ? byId.get(d.parent_id) || "—" : "—"}</td>
+      <td>${catSelect(d)}</td>
       <td class="right">${d.emp_count}</td>
       <td class="right"><a class="btn sm ghost" href="/departments/${d.id}">Manage</a></td>
-    </tr>`) : raw('<tr><td colspan="4" class="muted">No departments yet. Add one below or import a roster.</td></tr>');
+    </tr>`) : raw('<tr><td colspan="5" class="muted">No departments yet. Add one below or import a roster.</td></tr>');
   const body = html`
     <div class="pagehead"><h1>Departments</h1><p class="muted">Your org structure. Rename, merge, or split departments and move people between them — everything stays in sync with seats, roll-ups, and the target balance.</p></div>
     ${errorList(errors)}
     <div class="grid2">
       <section class="card">
         <h2>Departments</h2>
-        <table class="table"><thead><tr><th>Name</th><th>Parent</th><th class="right">People</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+        <p class="muted small">Set each team's <b>function</b> — this drives the suggested target balance. "Auto" guesses from the name.</p>
+        <form method="post" action="/departments/categories">
+          ${csrfField(ctx)}
+          <table class="table"><thead><tr><th>Name</th><th>Parent</th><th>Function</th><th class="right">People</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+          ${depts.length ? html`<button class="btn sm" type="submit" style="margin-top:10px">Save functions</button>` : ""}
+        </form>
       </section>
       <section class="card">
         <h2>Add a department</h2>

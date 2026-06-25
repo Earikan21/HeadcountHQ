@@ -85,14 +85,21 @@ export function expectedBackfills(headcount, attritionPct) {
  * Splits each function's benchmark across the departments in that bucket, then
  * normalizes the whole set to sum to 100%.
  */
-export function suggestDepartmentTargets(deptNames, phase = "early", industry = "general") {
-  const names = [...new Set(deptNames.filter(Boolean))];
-  if (!names.length) return {};
+const ASSIGNABLE = new Set(["rnd", "sm", "ga", "cs", "other"]);
+export function suggestDepartmentTargets(departments, phase = "early", industry = "general") {
+  // accepts ["Name", ...] or [{ name, category }, ...]
+  const list = (departments || [])
+    .map((d) => (typeof d === "string" ? { name: d, category: null } : d))
+    .filter((d) => d && d.name);
+  const seen = new Set();
+  const deduped = list.filter((d) => (seen.has(d.name) ? false : (seen.add(d.name), true)));
+  if (!deduped.length) return {};
   const fb = functionBenchmarks(phase, industry); // phase x industry mix
   const buckets = {};
-  for (const name of names) {
-    const b = classifyDepartment(name);
-    (buckets[b] = buckets[b] || []).push(name);
+  for (const d of deduped) {
+    // admin-assigned category wins; otherwise fall back to name heuristic
+    const b = d.category && ASSIGNABLE.has(d.category) ? d.category : classifyDepartment(d.name);
+    (buckets[b] = buckets[b] || []).push(d.name);
   }
   const raw = {};
   for (const [bucket, list] of Object.entries(buckets)) {
@@ -101,7 +108,7 @@ export function suggestDepartmentTargets(deptNames, phase = "early", industry = 
   }
   const sum = Object.values(raw).reduce((a, b) => a + b, 0) || 1;
   const out = {};
-  for (const name of names) out[name] = Math.round((raw[name] / sum) * 1000) / 10; // 1 decimal
+  for (const name of deduped.map((d) => d.name)) out[name] = Math.round((raw[name] / sum) * 1000) / 10; // 1 decimal
   return out;
 }
 

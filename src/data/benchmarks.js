@@ -57,3 +57,13 @@ export function functionBenchmarks(phase, industry) {
   const sum = raw.rnd + raw.sm + raw.ga + raw.cs || 1;
   return { rnd: round1((raw.rnd / sum) * 100), sm: round1((raw.sm / sum) * 100), ga: round1((raw.ga / sum) * 100), cs: round1((raw.cs / sum) * 100) };
 }
+
+/** Function categories an admin can assign to a department (drives the suggestion). */
+export const FUNCTION_CATEGORIES = [
+  ["rnd", "R&D / Engineering"],
+  ["sm", "Sales & Marketing"],
+  ["ga", "G&A / Operations"],
+  ["cs", "Customer Support"],
+  ["other", "Other"],
+];
+export const FUNCTION_CATEGORY_KEYS = FUNCTION_CATEGORIES.map(([k]) => k);

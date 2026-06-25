@@ -61,3 +61,18 @@ test("the live-update script is served", async () => {
   assert.match(res.headers.get("content-type"), /javascript/);
   await srv.close();
 });
+
+test("money budgets accept arbitrary amounts (not just round thousands)", async () => {
+  const { srv, c, eng } = await withRoster();
+  // an awkward, non-round amount
+  await c.post("/budgets", { mode: "money", company_money: "201500", [`money_${eng}`]: "201500" });
+  const row = srv.db.prepare("SELECT money_budget FROM budget_envelopes WHERE department_id=?").get(eng);
+  assert.equal(row.money_budget, 201500);
+  assert.equal(srv.db.prepare("SELECT company_money_budget AS m FROM workspace_settings WHERE workspace_id=1").get().m, 201500);
+  // the input no longer constrains to multiples of 1000
+  const pageHtml = await (await c.get("/budgets?mode=money")).text();
+  assert.ok(!pageHtml.includes('step="1000"'), "money input must not force a 1000 step");
+  assert.match(pageHtml, /name="money_[0-9]+"/);
+  assert.match(pageHtml, /step="any"/);
+  await srv.close();
+});
