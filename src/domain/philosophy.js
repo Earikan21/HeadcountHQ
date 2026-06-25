@@ -8,6 +8,8 @@
  * can override every target (see normalizeSettings + suggestDepartmentTargets).
  */
 
+import { functionBenchmarks, INDUSTRY_KEYS } from "../data/benchmarks.js";
+
 export const PHASES = ["early", "growth", "mid", "scale"];
 export const BUDGETING = ["incremental", "zero_based"];
 
@@ -50,7 +52,7 @@ export function normalizeSettings(s = {}) {
     seat_mode: oneOf(s.seat_mode, ["seat", "person"], "seat"),
     backfill_policy: oneOf(s.backfill_policy, ["auto", "reapprove"], "auto"),
     company_phase: oneOf(s.company_phase, PHASES, "early"),
-    industry: typeof s.industry === "string" ? s.industry : "",
+    industry: oneOf(s.industry, INDUSTRY_KEYS, "general"),
     target_span_of_control: clamp(s.target_span_of_control, 1, 20, 6),
     max_layers: Math.round(clamp(s.max_layers, 1, 12, 6)),
     loaded_cost_multiplier: clamp(s.loaded_cost_multiplier, 1, 3, 1.3),
@@ -83,9 +85,10 @@ export function expectedBackfills(headcount, attritionPct) {
  * Splits each function's benchmark across the departments in that bucket, then
  * normalizes the whole set to sum to 100%.
  */
-export function suggestDepartmentTargets(deptNames) {
+export function suggestDepartmentTargets(deptNames, phase = "early", industry = "general") {
   const names = [...new Set(deptNames.filter(Boolean))];
   if (!names.length) return {};
+  const fb = functionBenchmarks(phase, industry); // phase x industry mix
   const buckets = {};
   for (const name of names) {
     const b = classifyDepartment(name);
@@ -93,7 +96,7 @@ export function suggestDepartmentTargets(deptNames) {
   }
   const raw = {};
   for (const [bucket, list] of Object.entries(buckets)) {
-    const benchmark = FUNCTION_BENCHMARKS[bucket] ?? UNKNOWN_WEIGHT;
+    const benchmark = fb[bucket] ?? UNKNOWN_WEIGHT;
     for (const name of list) raw[name] = benchmark / list.length;
   }
   const sum = Object.values(raw).reduce((a, b) => a + b, 0) || 1;

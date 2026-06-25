@@ -5,7 +5,7 @@ model across departments and the C-suite. It connects current roster and
 compensation to structured hiring requests, reconciled against budget and runway,
 with role-based access and compensation confidentiality enforced on the server.
 
->  **Status: M4 complete (121 tests passing).** Directive 2.0 (philosophy-first)
+>  **Status: M3 complete (105 tests passing).** Directive 2.0 (philosophy-first)
 > is underway. Built so far: auth/accounts/roles + audit (M1); guided CSV roster
 > import with role-based compensation visibility (M2); a central **Philosophy hub**
 > and the **seat** model with active-vs-approved headcount and a directly-editable
@@ -23,9 +23,9 @@ with role-based access and compensation confidentiality enforced on the server.
 | M2.5 | Central philosophy hub + seat model + active-vs-approved + editable target balance | Done |
 | M2.75 | Department flexibility — rename / merge / split / move people | Done |
 | M3 | Structured requests (revised) — a request opens/changes a seat; justification + value fields | Done |
-| M4 | Roll-ups — ratios-vs-target dashboard + growth; budgets start at current headcount/cost; headcount↔money cost-impact | Done |
-| M4.5 | Benchmark seed — phase × industry research; phase-aware target suggestions | Next |
-| M5 | Planning engine — envelopes, runway/burn, scenarios, plan-vs-actual, exports | Planned |
+| M4 | Roll-ups — ratios-vs-target panels + growth trends | Next |
+| M4.5 | Benchmark seed — phase × industry research; phase-aware target suggestions | Planned |
+| M5 | Planning engine — runway/burn, scenarios, plan-vs-actual, board exports | Next |
 | M6 | Org chart, audit-history UI, import-adapter framework | Planned |
 
 ## First run

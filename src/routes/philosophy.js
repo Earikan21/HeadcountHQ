@@ -7,6 +7,7 @@ import { getDepartmentTargets, saveDepartmentTargets } from "../repos/targets.js
 import { listDepartments } from "../repos/departments.js";
 import { headcountRollup } from "../repos/seats.js";
 import * as P from "../domain/philosophy.js";
+import { INDUSTRIES } from "../data/benchmarks.js";
 import { logAudit } from "../repos/audit.js";
 
 const PHASE_LABELS = {
@@ -57,7 +58,8 @@ export function registerPhilosophyRoutes(router) {
   router.post("/philosophy/targets/suggest", (ctx) => {
     if (!requirePermission(ctx, canManageSettings)) return;
     const names = listDepartments(ctx.db).map((d) => d.name);
-    const sug = P.suggestDepartmentTargets(names);
+    const s = getSettings(ctx.db);
+    const sug = P.suggestDepartmentTargets(names, s.company_phase, s.industry);
     saveDepartmentTargets(ctx.db, sug, "default", ctx.user.id);
     ctx.redirect("/philosophy?msg=Suggested+balance+applied+-+now+edit+freely");
   });
@@ -155,8 +157,10 @@ function page(ctx) {
               ${P.PHASES.map((v) => html`<option value="${v}" ${s.company_phase === v ? raw("selected") : ""}>${PHASE_LABELS[v]}</option>`)}
             </select>
           </label>
-          <label>Industry <span class="hint">becomes a dropdown once benchmarks are seeded (M4.5)</span>
-            <input name="industry" value="${s.industry}" placeholder="e.g. B2B SaaS, fintech, healthtech">
+          <label>Industry <span class="hint">tilts the suggested balance toward your sector</span>
+            <select name="industry">
+              ${INDUSTRIES.map(([k, lbl]) => html`<option value="${k}" ${s.industry === k ? raw("selected") : ""}>${lbl}</option>`)}
+            </select>
           </label>
         </div>
       </section>
@@ -171,7 +175,7 @@ function page(ctx) {
     <section class="card" style="margin-top:18px">
       <div class="row-between">
         <div><h2>Target balance (you control this directly)</h2>
-          <p class="muted small">Each department's intended share of headcount. Edit any value; "Suggest a starting balance" seeds research-based defaults you can then override. Targets sum: <b>${Math.round(targetSum * 10) / 10}%</b>.</p>
+          <p class="muted small">Each department's intended share of headcount. Edit any value; "Suggest a starting balance" seeds research-based defaults for your <b>phase &amp; industry</b> that you can then override. Targets sum: <b>${Math.round(targetSum * 10) / 10}%</b>.</p>
         </div>
         ${depts.length ? html`<form method="post" action="/philosophy/targets/suggest" class="inline">
           ${csrfField(ctx)}<button class="btn ghost sm" type="submit">Suggest a starting balance</button>
