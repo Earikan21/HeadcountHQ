@@ -101,3 +101,16 @@ export function backfillSeats(db) {
   }
   return made;
 }
+
+/** Seats added in the last N days, per department (a simple growth signal). */
+export function recentSeatAdds(db, days = 90, departmentId = null) {
+  const where = departmentId == null ? "" : "AND s.department_id = ?";
+  const sql = `SELECT d.name AS department, COUNT(*) AS adds
+                 FROM seats s LEFT JOIN departments d ON d.id = s.department_id
+                WHERE s.created_at >= datetime('now', ?) AND s.status != 'closed' ${where}
+                GROUP BY s.department_id`;
+  const rows = departmentId == null ? db.prepare(sql).all(`-${days} days`) : db.prepare(sql).all(`-${days} days`, departmentId);
+  const byDept = {}; let total = 0;
+  for (const r of rows) { byDept[r.department || "(none)"] = r.adds; total += r.adds; }
+  return { byDept, total };
+}

@@ -1,11 +1,12 @@
 import { html, raw } from "../html.js";
-import { renderPage, csrfField, money } from "../views/ui.js";
+import { renderPage, csrfField, money, moneyShort } from "../views/ui.js";
 import { requirePermission } from "../middleware.js";
 import { canSetBudgets } from "../authz.js";
 import {
-  allReconciliation, getEnvelopes, getCompanyBudget,
+  allReconciliation, getCompanyBudget,
   setCompanyHeadcount, setCompanyMoney, setEnvelopeHeadcount, setEnvelopeMoney,
 } from "../repos/budgets.js";
+import { expectedRange } from "../domain/budget.js";
 import { listDepartments } from "../repos/departments.js";
 import { getSettings } from "../repos/settings.js";
 import { logAudit } from "../repos/audit.js";
@@ -32,11 +33,10 @@ export function registerBudgetRoutes(router) {
   });
 }
 
-function bar(used, budget, over) {
+const bar = (used, budget, over) => {
   const pct = budget > 0 ? Math.min(100, Math.round((used / budget) * 100)) : 0;
-  const cls = over ? "over" : pct >= 90 ? "warn" : "ok";
-  return raw(`<div class="ubar"><i class="${cls}" style="width:${pct}%"></i></div>`);
-}
+  return raw(`<div class="ubar"><i class="${over ? "over" : pct >= 90 ? "warn" : "ok"}" style="width:${pct}%"></i></div>`);
+};
 function allocNote(a, kind) {
   if (!a.cap) return html`<span class="muted">set a company budget first</span>`;
   if (a.over > 0) return html`<span class="over-txt">over by ${kind === "money" ? money(a.over) : a.over}</span>`;
@@ -46,17 +46,20 @@ function tabs(mode) {
   const tab = (m, label) => `<a class="wtab ${m === mode ? "on" : ""}" href="/budgets?mode=${m}">${label}</a>`;
   return raw(`<div class="wtabs">${tab("headcount", "Headcount budget")}${tab("money", "Money budget")}</div>`);
 }
+function expectedText(addHeads, band) {
+  const r = expectedRange(addHeads, band);
+  return r ? `+ expected ${moneyShort(r.low)}–${moneyShort(r.high)}` : "";
+}
 
 function page(ctx, mode) {
   const settings = getSettings(ctx.db);
   const cap = getCompanyBudget(ctx.db);
   const { rows, allocation, company, currentEmployees } = allReconciliation(ctx.db);
-  const env = getEnvelopes(ctx.db);
   const noDepts = rows.length === 0;
 
   const head = html`
     <div class="pagehead"><h1>Budgets</h1>
-      <p class="muted">Top-down: set one company budget, then allocate it across departments. Work on one number at a time. Enforcement is <b>${settings.budget_enforcement}</b> (<a href="/philosophy">change</a>).</p>
+      <p class="muted">Top-down: set one company budget, then allocate it across departments — one number at a time. Current headcount and its cost already count toward what's allocated. Enforcement is <b>${settings.budget_enforcement}</b> (<a href="/philosophy">change</a>).</p>
     </div>
     ${tabs(mode)}`;
 
@@ -64,13 +67,21 @@ function page(ctx, mode) {
   if (mode === "headcount") {
     const a = allocation.headcount;
     const deptRows = noDepts ? raw('<tr><td colspan="5" class="muted">No departments yet.</td></tr>')
-      : rows.map((r) => html`<tr>
-          <td><b>${r.name}</b></td>
-          <td class="right">${r.currentEmployees}</td>
-          <td class="right">${r.positions.approved}${r.positions.pending ? html` <span class="muted">+${r.positions.pending} pending</span>` : ""}</td>
-          <td><input class="tcell" type="number" min="0" step="1" name="hc_${r.id}" value="${env[r.id]?.headcount_budget ?? 0}"></td>
-          <td>${bar(r.positions.approved, r.positions.budget, r.positions.over > 0)}</td>
-        </tr>`);
+      : rows.map((r) => {
+          const band = r.costBand;
+          const add = Math.max(0, r.effHeadcount - r.currentEmployees);
+          return html`<tr>
+            <td><b>${r.name}</b></td>
+            <td class="right">${r.currentEmployees}</td>
+            <td class="right">${r.positions.approved}${r.positions.pending ? html` <span class="muted">+${r.positions.pending}</span>` : ""}</td>
+            <td>
+              <input class="tcell" type="number" min="${r.currentEmployees}" step="1" name="hc_${r.id}" value="${r.effHeadcount}"
+                     data-current="${r.currentEmployees}" data-band-low="${band?.low || 0}" data-band-high="${band?.high || 0}" data-expected-target="exp_${r.id}">
+              <div class="exp ${add > 0 ? "on" : ""}" id="exp_${r.id}">${expectedText(add, band)}</div>
+            </td>
+            <td>${bar(r.positions.approved, r.effHeadcount, r.positions.over > 0)}</td>
+          </tr>`;
+        });
     body = html`${head}
       <form method="post" action="/budgets">
         ${csrfField(ctx)}<input type="hidden" name="mode" value="headcount">
@@ -85,22 +96,31 @@ function page(ctx, mode) {
         </div>
         <section class="card">
           <h2>Allocate positions to departments</h2>
+          <p class="muted small">Allocations start at each team's current headcount. Adding positions shows the expected money impact from that team's salary band.</p>
           <table class="table">
-            <thead><tr><th>Department</th><th class="right">Current employees</th><th class="right">Approved</th><th>Allocated</th><th>Fill</th></tr></thead>
+            <thead><tr><th>Department</th><th class="right">Current</th><th class="right">Approved</th><th>Allocated &amp; cost impact</th><th>Fill</th></tr></thead>
             <tbody>${deptRows}</tbody>
           </table>
           ${noDepts ? html`<p class="muted">Add departments first.</p>` : html`<button class="btn" type="submit" style="margin-top:12px">Save headcount budget</button>`}
         </section>
-      </form>`;
+      </form>
+      <script src="/static/budgets.js" defer></script>`;
   } else {
     const a = allocation.money;
     const deptRows = noDepts ? raw('<tr><td colspan="4" class="muted">No departments yet.</td></tr>')
-      : rows.map((r) => html`<tr>
-          <td><b>${r.name}</b></td>
-          <td class="right">${money(r.money.committed)}${r.money.pending ? html` <span class="muted">+${money(r.money.pending)} pending</span>` : ""}</td>
-          <td><input class="tcell wide" type="number" min="0" step="1000" name="money_${r.id}" value="${env[r.id]?.money_budget ?? 0}"></td>
-          <td>${bar(r.money.committed, r.money.budget, r.money.over > 0)}</td>
-        </tr>`);
+      : rows.map((r) => {
+          const unfilled = Math.max(0, r.effHeadcount - r.currentEmployees);
+          const implied = expectedRange(unfilled, r.costBand);
+          return html`<tr>
+            <td><b>${r.name}</b></td>
+            <td class="right">${money(r.money.committed)}${r.money.pending ? html` <span class="muted">+${money(r.money.pending)}</span>` : ""}</td>
+            <td>
+              <input class="tcell wide" type="number" min="0" step="1000" name="money_${r.id}" value="${r.effMoney}">
+              ${implied ? html`<div class="exp on">headcount budget implies +${moneyShort(implied.low)}–${moneyShort(implied.high)}</div>` : ""}
+            </td>
+            <td>${bar(r.money.committed, r.effMoney, r.money.over > 0)}</td>
+          </tr>`;
+        });
     body = html`${head}
       <form method="post" action="/budgets">
         ${csrfField(ctx)}<input type="hidden" name="mode" value="money">
@@ -114,6 +134,7 @@ function page(ctx, mode) {
         </div>
         <section class="card">
           <h2>Allocate money to departments</h2>
+          <p class="muted small">Allocations start at each team's current committed cost. The hint shows what the headcount budget implies for still-unfilled positions.</p>
           <table class="table">
             <thead><tr><th>Department</th><th class="right">Committed</th><th>Allocated</th><th>Spend</th></tr></thead>
             <tbody>${deptRows}</tbody>

@@ -40,3 +40,21 @@ export function wouldExceed({ headcountBudget = 0, moneyBudget = 0, approvedPosi
 export function approvalBlocked(enforcement, exceed) {
   return enforcement === "hard" && exceed.any;
 }
+
+/** Cost-per-head band for a set of fully-loaded costs (min/max/avg). */
+export function costBand(loadedCosts) {
+  const vals = (loadedCosts || []).map(Number).filter((v) => Number.isFinite(v) && v > 0);
+  if (!vals.length) return null;
+  return {
+    low: Math.min(...vals),
+    high: Math.max(...vals),
+    avg: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+    count: vals.length,
+  };
+}
+
+/** Expected added money for `addHeads` more positions, given a cost band. */
+export function expectedRange(addHeads, band) {
+  if (!band || !(addHeads > 0)) return null;
+  return { low: Math.round(addHeads * band.low), high: Math.round(addHeads * band.high), heads: addHeads };
+}

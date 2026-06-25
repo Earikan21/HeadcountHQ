@@ -120,3 +120,10 @@ fieldset.radios legend{padding:0}
 .wtab{padding:9px 16px;font-weight:700;font-size:13.5px;color:var(--muted);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
 .wtab:hover{color:var(--ink)}
 .wtab.on{color:var(--brand);border-bottom-color:var(--brand)}
+
+.exp{font-size:11.5px;color:var(--muted);margin-top:4px;min-height:14px}
+.exp.on{color:var(--violet);font-weight:600}
+
+.plainlist{list-style:none;margin:6px 0 0;padding:0}
+.plainlist li{padding:4px 0;font-size:13.5px;border-bottom:1px solid var(--line)}
+.plainlist li:last-child{border-bottom:none}

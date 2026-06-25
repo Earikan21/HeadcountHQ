@@ -12,6 +12,13 @@ export function csrfField(ctx) {
 }
 
 export const money = (n) => "$" + Math.round(Number(n) || 0).toLocaleString("en-US");
+/** Compact money: $1.2M, $250k, $900. */
+export const moneyShort = (n) => {
+  const v = Math.round(Number(n) || 0);
+  if (Math.abs(v) >= 1e6) return "$" + (v / 1e6).toFixed(v % 1e6 === 0 ? 0 : 1) + "M";
+  if (Math.abs(v) >= 1e3) return "$" + Math.round(v / 1e3) + "k";
+  return "$" + v;
+};
 export const moneyRange = (a, b) =>
   a == null && b == null ? "—" : `${money(a)} – ${money(b)}`;
 

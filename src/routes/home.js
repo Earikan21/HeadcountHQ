@@ -1,47 +1,121 @@
 import { html, raw } from "../html.js";
-import { renderPage } from "../views/ui.js";
+import { renderPage, money } from "../views/ui.js";
+import { ROLE_LABELS, canViewCompTotals, departmentScope, canSeeAllDepartments } from "../authz.js";
 import { countUsers } from "../repos/users.js";
 import { listDepartments } from "../repos/departments.js";
-import { ROLE_LABELS } from "../authz.js";
+import { headcountRollup, recentSeatAdds } from "../repos/seats.js";
+import { allReconciliation } from "../repos/budgets.js";
+import { getDepartmentTargets } from "../repos/targets.js";
+import { mixVsTarget } from "../domain/philosophy.js";
+import { listRequests } from "../repos/requests.js";
+import { OPEN_STATUSES } from "../domain/requests.js";
 
 export function registerHomeRoutes(router) {
   router.get("/", (ctx) => {
-    if (!ctx.user) {
-      return ctx.redirect(countUsers(ctx.db) === 0 ? "/setup" : "/login");
-    }
-    const depts = listDepartments(ctx.db).length;
-    const people = countUsers(ctx.db);
-    const isAdmin = ctx.user.role === "finance_admin";
+    if (!ctx.user) return ctx.redirect(countUsers(ctx.db) === 0 ? "/setup" : "/login");
+    const scope = departmentScope(ctx.user);
+    const roll = headcountRollup(ctx.db, { departmentId: scope });
+    const t = roll.totals;
+    const showCost = canViewCompTotals(ctx.user);
+    const openReq = listRequests(ctx.db, { departmentId: scope }).filter((r) => OPEN_STATUSES.includes(r.status));
 
-    const tiles = [
-      tile("Roster", "Import and review your current people & compensation.", "/roster"),
-      tile("Headcount", "Approved vs. active seats by department.", "/headcount"),
-      tile("Hiring requests", "Submit and track structured requests for new roles.", "/requests"),
+    const kpis = [
+      kpi("Active headcount", t.active),
+      kpi("Approved positions", t.approved),
+      kpi("Open seats", t.open, t.open ? "warn" : ""),
     ];
-    if (ctx.user.role !== "manager") tiles.push(tile("Budgets", "Set budgets; reconcile requests vs. approved vs. cap.", "/budgets"));
-    if (isAdmin) tiles.push(tile("Philosophy", "Set the rules: seats, backfill, span, cost, targets.", "/philosophy"));
-    if (isAdmin) tiles.push(tile("Accounts", "Manage who can sign in.", "/accounts"));
+    if (showCost) {
+      kpis.push(kpi("Pending requests", openReq.length, openReq.length ? "warn" : ""));
+    } else {
+      kpis.push(kpi("My open requests", openReq.length, openReq.length ? "warn" : ""));
+    }
 
     const body = html`
       <div class="pagehead">
-        <h1>Welcome, ${ctx.user.name.split(" ")[0]}</h1>
-        <p class="muted">You're signed in as <b>${ROLE_LABELS[ctx.user.role]}</b>. ${roleNote(ctx.user.role)}</p>
+        <h1>${greeting(ctx.user)}</h1>
+        <p class="muted">${ROLE_LABELS[ctx.user.role]} · ${roleNote(ctx.user.role)}</p>
       </div>
-      <div class="kpis">
-        ${kpi("People with access", people)}
-        ${kpi("Departments", depts)}
-      </div>
-      <div class="tiles">${tiles}</div>
-      ${depts === 0 && isAdmin ? html`<div class="flash">Get started by adding your <a href="/departments">departments</a>, then importing your <a href="/roster">roster</a>.</div>` : ""}
+      <div class="kpis">${kpis}</div>
+      ${canSeeAllDepartments(ctx.user) ? adminPanels(ctx) : managerPanels(ctx, scope, roll, openReq)}
     `;
     return ctx.html(200, renderPage(ctx, { title: "Dashboard", body, active: "dashboard" }));
   });
 }
 
-const roleNote = (role) =>
-  role === "finance_admin" ? "You can see exact compensation and manage everything."
-  : role === "c_suite" ? "You see all departments with compensation as totals and bands."
-  : "You see your own department, with compensation shown as bands.";
+function adminPanels(ctx) {
+  // ---- department balance vs target ----
+  const roll = headcountRollup(ctx.db);
+  const actualByDept = {};
+  for (const d of roll.departments) actualByDept[d.department] = d.active;
+  const targets = getDepartmentTargets(ctx.db);
+  const targetByDept = {};
+  for (const [k, v] of Object.entries(targets)) targetByDept[k] = v.target_pct;
+  const mix = mixVsTarget(actualByDept, targetByDept).filter((m) => m.count > 0 || m.targetPct != null);
 
-const tile = (title, desc, href) => html`<a class="tile" href="${href}"><b>${title}</b><span>${desc}</span></a>`;
-const kpi = (label, val) => html`<div class="kpi"><div class="lbl">${label}</div><div class="val">${val}</div></div>`;
+  const mixRows = mix.length ? mix.map((m) => html`<tr>
+      <td><b>${m.name}</b></td>
+      <td class="right">${m.count}</td>
+      <td class="right">${m.actualPct}%</td>
+      <td class="right">${m.targetPct == null ? "—" : m.targetPct + "%"}</td>
+      <td>${varianceBadge(m.variance)}</td>
+    </tr>`) : raw('<tr><td colspan="5" class="muted">Import a roster and set a target balance to see this.</td></tr>');
+
+  // ---- budget summary ----
+  const { allocation, company } = allReconciliation(ctx.db);
+  // ---- growth ----
+  const growth = recentSeatAdds(ctx.db, 90);
+
+  return html`
+    <div class="grid2">
+      <section class="card">
+        <h2>Department balance vs. target</h2>
+        <table class="table">
+          <thead><tr><th>Department</th><th class="right">HC</th><th class="right">Actual</th><th class="right">Target</th><th>Status</th></tr></thead>
+          <tbody>${mixRows}</tbody>
+        </table>
+        <p class="muted small"><a href="/philosophy">Edit the target balance →</a></p>
+      </section>
+      <div>
+        <section class="card">
+          <h2>Budget</h2>
+          <p>Positions allocated <b>${allocation.headcount.allocated}</b> of <b>${allocation.headcount.cap || "—"}</b> ${allocation.headcount.over ? raw(`<span class="over-txt">(over by ${allocation.headcount.over})</span>`) : ""}</p>
+          <p>Spend committed <b>${money(company.money.committed)}</b> of <b>${company.money.budget ? money(company.money.budget) : "—"}</b></p>
+          <p class="muted small"><a href="/budgets">Manage budgets →</a></p>
+        </section>
+        <section class="card">
+          <h2>Growth · last 90 days</h2>
+          <p><b>${growth.total}</b> position${growth.total === 1 ? "" : "s"} added across the company.</p>
+          ${Object.keys(growth.byDept).length ? html`<ul class="plainlist">${Object.entries(growth.byDept).sort((a,b)=>b[1]-a[1]).map(([d, n]) => html`<li>${d}: <b>+${n}</b></li>`)}</ul>` : html`<p class="muted small">No recent additions.</p>`}
+        </section>
+      </div>
+    </div>`;
+}
+
+function managerPanels(ctx, scope, roll, openReq) {
+  const deptName = listDepartments(ctx.db).find((d) => d.id === scope)?.name || "your team";
+  const reqRows = openReq.slice(0, 6).map((r) => html`<tr><td><a href="/requests/${r.id}">${r.title}</a></td><td>${(r.status || "").replace("_", " ")}</td></tr>`);
+  return html`
+    <div class="grid2">
+      <section class="card">
+        <h2>${deptName}</h2>
+        <p>Active headcount <b>${roll.totals.active}</b> · Open seats <b>${roll.totals.open}</b> · Approved <b>${roll.totals.approved}</b></p>
+        <p class="muted small"><a href="/headcount">View headcount →</a></p>
+      </section>
+      <section class="card">
+        <h2>Your open requests</h2>
+        ${openReq.length ? html`<table class="table"><tbody>${reqRows}</tbody></table>` : html`<p class="muted">None open. <a href="/requests/new">File a request →</a></p>`}
+      </section>
+    </div>`;
+}
+
+const greeting = (u) => "Welcome, " + String(u.name || "").split(" ")[0];
+const roleNote = (role) =>
+  role === "finance_admin" ? "Full visibility, exact compensation, and workspace control."
+  : role === "c_suite" ? "All departments; compensation as totals and bands."
+  : "Your department, with compensation shown as bands.";
+const kpi = (label, val, tone = "") => html`<div class="kpi"><div class="lbl">${label}</div><div class="val ${tone}">${val}</div></div>`;
+function varianceBadge(v) {
+  if (v == null) return html`<span class="muted">—</span>`;
+  if (Math.abs(v) < 2) return html`<span class="pill ok2">on target</span>`;
+  return v > 0 ? html`<span class="pill warn2">+${v}% over</span>` : html`<span class="pill off">${v}% under</span>`;
+}

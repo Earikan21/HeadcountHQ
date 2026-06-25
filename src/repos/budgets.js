@@ -1,5 +1,21 @@
 /** Budget envelopes + per-department reconciliation (positions & money). */
-import { reconcile } from "../domain/budget.js";
+import { reconcile, costBand } from "../domain/budget.js";
+
+const loadedMultiplier = (db) => db.prepare("SELECT loaded_cost_multiplier FROM workspace_settings WHERE workspace_id=1").get()?.loaded_cost_multiplier ?? 1.3;
+
+/** Per-head fully-loaded cost band for a department (falls back to company-wide). */
+export function deptCostBand(db, deptId) {
+  const mult = loadedMultiplier(db);
+  const here = db.prepare("SELECT c.annual_salary AS s FROM employees e JOIN compensation c ON c.employee_id=e.id WHERE e.department_id=? AND c.annual_salary IS NOT NULL").all(deptId);
+  let band = costBand(here.map((r) => r.s * mult));
+  if (!band) {
+    const all = db.prepare("SELECT annual_salary AS s FROM compensation WHERE annual_salary IS NOT NULL").all().map((r) => r.s * mult);
+    band = costBand(all);
+  }
+  return band;
+}
+const currentCost = (db, deptId) => db.prepare("SELECT COALESCE(SUM(loaded_cost_estimate),0) AS s FROM seats WHERE department_id=? AND status='filled'").get(deptId).s;
+const currentHeadcount = (db, deptId) => db.prepare("SELECT COUNT(*) AS n FROM employees WHERE department_id=?").get(deptId).n;
 
 const APPROVED = "('approved','open','filled','frozen')";
 const OPEN_REQ = "('submitted','under_review','deferred')";
@@ -80,14 +96,21 @@ export function departmentReconciliation(db, deptId) {
  */
 export function allReconciliation(db) {
   const depts = db.prepare("SELECT id, name FROM departments ORDER BY name").all();
-  const empCount = db.prepare("SELECT COUNT(*) AS n FROM employees WHERE department_id=?");
-  const rows = depts.map((d) => ({ id: d.id, name: d.name, currentEmployees: empCount.get(d.id).n, ...departmentReconciliation(db, d.id) }));
+  const rows = depts.map((d) => {
+    const rec = departmentReconciliation(db, d.id);
+    const cur = currentHeadcount(db, d.id);
+    const curCost = currentCost(db, d.id);
+    // Current headcount + its cost are a floor on the allocation (never start at 0).
+    const effHeadcount = Math.max(rec.positions.budget, cur);
+    const effMoney = Math.max(rec.money.budget, curCost);
+    return { id: d.id, name: d.name, currentEmployees: cur, currentCost: curCost, costBand: deptCostBand(db, d.id), effHeadcount, effMoney, ...rec };
+  });
   const sum = (sel) => rows.reduce((a, r) => a + sel(r), 0);
   const cap = getCompanyBudget(db);
 
   const allocated = {
-    headcount: sum((r) => r.positions.budget),
-    money: sum((r) => r.money.budget),
+    headcount: sum((r) => r.effHeadcount),
+    money: sum((r) => r.effMoney),
   };
   const allocation = {
     headcount: { cap: cap.headcount, allocated: allocated.headcount, remaining: cap.headcount - allocated.headcount, over: Math.max(0, allocated.headcount - cap.headcount) },
