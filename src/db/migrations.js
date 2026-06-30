@@ -359,4 +359,30 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_06_30_013_ai_import",
+    up(db) {
+      db.exec(`
+        ALTER TABLE workspace_settings ADD COLUMN ai_import_enabled INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE workspace_settings ADD COLUMN ai_provider       TEXT    NOT NULL DEFAULT 'anthropic'
+          CHECK (ai_provider IN ('anthropic','openai'));
+
+        -- Audit trail for AI-assisted imports. Records THAT the AI was used and how
+        -- much was accepted — never the payload that was analyzed.
+        CREATE TABLE import_runs (
+          id               INTEGER PRIMARY KEY AUTOINCREMENT,
+          workspace_id     INTEGER NOT NULL DEFAULT 1,
+          import_batch_id  INTEGER REFERENCES import_batches(id),
+          user_id          INTEGER,
+          phase            TEXT NOT NULL CHECK (phase IN ('mapping','cleanup')),
+          used_ai          INTEGER NOT NULL DEFAULT 0,
+          provider         TEXT,
+          suggestion_count INTEGER NOT NULL DEFAULT 0,
+          accepted_count   INTEGER NOT NULL DEFAULT 0,
+          created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX idx_import_runs_batch ON import_runs(import_batch_id);
+      `);
+    },
+  },
 ];

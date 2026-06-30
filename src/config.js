@@ -51,6 +51,14 @@ export function loadConfig(env = process.env) {
   const SMTP_PASS = env.SMTP_PASS || "";
   const SMTP_FROM = env.SMTP_FROM || "Headcount HQ <no-reply@example.com>";
 
+  // Optional AI-assisted import. The key is read here only; it is never stored in
+  // the DB and never rendered back to any page. With no key, the feature is simply
+  // unavailable and the import falls back to the deterministic mapper.
+  const AI_IMPORT_PROVIDER = oneOf(env.AI_IMPORT_PROVIDER, ["anthropic", "openai"], "anthropic");
+  const AI_IMPORT_API_KEY = (env.AI_IMPORT_API_KEY || "").trim();
+  const AI_IMPORT_MODEL = (env.AI_IMPORT_MODEL || "").trim() ||
+    (AI_IMPORT_PROVIDER === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001");
+
   if (SESSION_SECRET.length < 16) {
     errors.push("SESSION_SECRET must be set to at least 16 characters.");
   }
@@ -75,6 +83,10 @@ export function loadConfig(env = process.env) {
     SMTP_PASS,
     SMTP_FROM,
     emailEnabled: SMTP_HOST.length > 0,
+    AI_IMPORT_PROVIDER,
+    AI_IMPORT_API_KEY,
+    AI_IMPORT_MODEL,
+    aiImportConfigured: AI_IMPORT_API_KEY.length > 0,
   };
 }
 

@@ -34,6 +34,15 @@ export const setBatchHeaderRow = (db, id, headerRow, rowCount) =>
 export const updateBatchMapping = (db, id, mapping) =>
   db.prepare("UPDATE import_batches SET mapping = ? WHERE id = ?").run(JSON.stringify(mapping), id);
 
+/** Merge a patch into the batch's JSON assumptions blob (AI cleanup lives here). */
+export function updateBatchAssumptions(db, id, patch) {
+  const cur = db.prepare("SELECT assumptions FROM import_batches WHERE id = ?").get(id);
+  const obj = cur && cur.assumptions ? JSON.parse(cur.assumptions) : {};
+  const next = { ...obj, ...patch };
+  db.prepare("UPDATE import_batches SET assumptions = ? WHERE id = ?").run(JSON.stringify(next), id);
+  return next;
+}
+
 export const setBatchStatus = (db, id, status, cleanCount = null) =>
   db.prepare("UPDATE import_batches SET status = ?, clean_count = COALESCE(?, clean_count), committed_at = CASE WHEN ?='committed' THEN datetime('now') ELSE committed_at END WHERE id = ?")
     .run(status, cleanCount, status, id);

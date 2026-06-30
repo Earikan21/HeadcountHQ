@@ -4,13 +4,15 @@ import { openDb } from "../src/db/database.js";
 import { migrateToLatest } from "../src/db/migrate.js";
 import { buildApp } from "../src/app.js";
 
-/** Start a fully-migrated app on an ephemeral port; returns { base, server, db }. */
-export async function startTestServer() {
+/** Start a fully-migrated app on an ephemeral port; returns { base, server, db }.
+ *  Pass envOverrides to exercise optional config (e.g. AI_IMPORT_API_KEY). */
+export async function startTestServer(envOverrides = {}) {
   const config = loadConfig({
     NODE_ENV: "test",
     SESSION_SECRET: "test-secret-0123456789abcdef",
     DATABASE_PATH: ":memory:",
     COOKIE_SECURE: "false",
+    ...envOverrides,
   });
   const db = openDb(":memory:");
   migrateToLatest(db);

@@ -7,13 +7,20 @@ import { parseUpload } from "../domain/adapters.js";
 import * as R from "../domain/roster.js";
 import { logAudit } from "../repos/audit.js";
 import {
-  createBatch, getBatch, updateBatchMapping, setBatchHeaderRow, setBatchStatus, listBatches,
+  createBatch, getBatch, updateBatchMapping, updateBatchAssumptions, setBatchHeaderRow, setBatchStatus, listBatches,
   upsertDepartmentByName, upsertEmployee, listEmployees, nextEmployeeId, getEmployeeByExtId,
 } from "../repos/roster.js";
 import { ensureSeatForEmployee, vacateSeat, fillSeat, getSeat } from "../repos/seats.js";
-import { listDepartments, getDepartment } from "../repos/departments.js";
+import { listDepartments, getDepartment, setDepartmentCategory } from "../repos/departments.js";
 import { getSettings } from "../repos/settings.js";
 import { loadedCost as loadedCostFn } from "../domain/philosophy.js";
+import { flagAnomalies, distinctValues } from "../domain/import_ai.js";
+import { clientFromConfig, suggestMapping, classifyDepartments, normalizeTitles } from "../domain/ai_import.js";
+import { recordImportRun } from "../repos/import_runs.js";
+import { FUNCTION_CATEGORIES } from "../data/benchmarks.js";
+
+/** Is the AI assist available right now (configured on the host AND toggled on)? */
+const aiReady = (ctx) => Boolean(ctx.config.aiImportConfigured) && Boolean(getSettings(ctx.db).ai_import_enabled);
 
 const compCell = (user, annual) => {
   if (annual == null) return "—";
@@ -157,6 +164,49 @@ export function registerRosterRoutes(router) {
     ctx.redirect(`/roster/import/${batch.id}/map`);
   });
 
+  // ---- AI assist: suggest a column mapping (headers + type stats only) ----
+  router.post("/roster/import/:id/ai-map", async (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    if (!aiReady(ctx)) return ctx.redirect(`/roster/import/${batch.id}/map`);
+    const client = clientFromConfig(ctx.config);
+    const res = await suggestMapping({ headers: batch.headers, rows: batch.rawRows, client });
+    updateBatchMapping(ctx.db, batch.id, res.mapping);
+    const mapped = Object.values(res.mapping).filter(Boolean).length;
+    recordImportRun(ctx.db, { batchId: batch.id, userId: ctx.user.id, phase: "mapping",
+      usedAi: res.source === "ai", provider: ctx.config.AI_IMPORT_PROVIDER, suggestionCount: mapped });
+    logAudit(ctx.db, { userId: ctx.user.id, action: "import.ai_mapped", entity: "import_batch", entityId: batch.id, detail: { source: res.source, mapped } });
+    ctx.redirect(`/roster/import/${batch.id}/map?ai=${res.source === "ai" ? 1 : 0}`);
+  });
+
+  // ---- AI assist: cleanup suggestions (dept categories + title normalization) ----
+  router.post("/roster/import/:id/ai-clean", async (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    if (!aiReady(ctx)) return ctx.redirect(`/roster/import/${batch.id}/review`);
+    const built = R.buildCanonical(batch.rawRows, batch.mapping);
+    const okRows = built.rows.filter((r) => r._ok);
+    const deptNames = [...new Set(okRows.map((r) => r.department).filter(Boolean))];
+    const titles = [...new Set(okRows.map((r) => r.job_title).filter(Boolean))];
+    const client = clientFromConfig(ctx.config);
+    const [cat, tit] = await Promise.all([
+      classifyDepartments({ names: deptNames, client }),
+      normalizeTitles({ titles, client }),
+    ]);
+    updateBatchAssumptions(ctx.db, batch.id, {
+      aiDeptCategory: cat.map, aiTitleMap: tit.map, aiCleanupRun: true,
+      aiCleanupSource: { category: cat.source, title: tit.source },
+    });
+    const usedAi = cat.source === "ai" || tit.source === "ai";
+    recordImportRun(ctx.db, { batchId: batch.id, userId: ctx.user.id, phase: "cleanup",
+      usedAi, provider: ctx.config.AI_IMPORT_PROVIDER,
+      suggestionCount: Object.keys(cat.map).length + Object.keys(tit.map).length });
+    logAudit(ctx.db, { userId: ctx.user.id, action: "import.ai_cleaned", entity: "import_batch", entityId: batch.id, detail: { categories: Object.keys(cat.map).length, titles: Object.keys(tit.map).length } });
+    ctx.redirect(`/roster/import/${batch.id}/review`);
+  });
+
   // ---- Step 3: review ----
   router.get("/roster/import/:id/review", (ctx) => {
     if (!requirePermission(ctx, canImportRoster)) return;
@@ -174,10 +224,21 @@ export function registerRosterRoutes(router) {
     const built = R.buildCanonical(batch.rawRows, batch.mapping);
     const settingsRow = getSettings(ctx.db);
     const mult = settingsRow.loaded_cost_multiplier;
-    let committed = 0;
+    // Accepted AI cleanup (confirmed by the user clicking Import after seeing it).
+    const a = batch.assumptions || {};
+    const titleMap = a.aiTitleMap || {};
+    const catMap = a.aiDeptCategory || {};
+    let committed = 0, titlesApplied = 0, catsApplied = 0;
+    const seenDeptCat = new Set();
     for (const row of built.rows) {
       if (!row._ok) continue;
+      if (titleMap[row.job_title]) { row.job_title = titleMap[row.job_title]; titlesApplied++; }
       const deptId = upsertDepartmentByName(ctx.db, row.department);
+      if (catMap[row.department] && !seenDeptCat.has(deptId)) {
+        setDepartmentCategory(ctx.db, deptId, catMap[row.department]);
+        seenDeptCat.add(deptId);
+        catsApplied++;
+      }
       const empId = upsertEmployee(ctx.db, row, deptId);
       if (row._status !== "inactive") {
         ensureSeatForEmployee(ctx.db, { employeeId: empId, departmentId: deptId, title: row.job_title, loadedCost: loadedCostFn(row.annual_salary, mult) });
@@ -189,7 +250,12 @@ export function registerRosterRoutes(router) {
       committed++;
     }
     setBatchStatus(ctx.db, batch.id, "committed", committed);
-    logAudit(ctx.db, { userId: ctx.user.id, action: "import.committed", entity: "import_batch", entityId: batch.id, detail: { committed } });
+    if (a.aiCleanupRun && (titlesApplied || catsApplied)) {
+      recordImportRun(ctx.db, { batchId: batch.id, userId: ctx.user.id, phase: "cleanup",
+        usedAi: (a.aiCleanupSource && (a.aiCleanupSource.category === "ai" || a.aiCleanupSource.title === "ai")) || false,
+        provider: ctx.config.AI_IMPORT_PROVIDER, acceptedCount: titlesApplied + catsApplied });
+    }
+    logAudit(ctx.db, { userId: ctx.user.id, action: "import.committed", entity: "import_batch", entityId: batch.id, detail: { committed, titlesApplied, catsApplied } });
     ctx.redirect(`/roster?msg=Imported+${committed}+employees`);
   });
 
@@ -333,11 +399,28 @@ function mapPage(ctx, { batch, errors }) {
       <div>${raw(badge)}</div>
     </div>`;
   });
+  const aiOn = aiReady(ctx);
+  const aiParam = ctx.query.get("ai");
+  const aiNotice = aiParam === "1"
+    ? html`<div class="flash ok">AI suggested the mappings below from your column headers and types only — your data stayed on this server. Review and confirm each one.</div>`
+    : aiParam === "0"
+    ? html`<div class="flash warn">The AI assist was unavailable, so we used the built-in matcher. Review the mappings below.</div>`
+    : "";
+  const aiPanel = aiOn
+    ? html`<form method="post" action="/roster/import/${batch.id}/ai-map" class="aiassist">
+        ${csrfField(ctx)}
+        <div><b>✨ Suggest mappings with AI</b><p class="muted small" style="margin:2px 0 0">Sends only your column <i>names</i> and types — never names, salaries, or any row.</p></div>
+        <button class="btn ghost sm" type="submit">Analyze columns</button>
+      </form>`
+    : "";
+
   const body = html`
     <div class="pagehead"><h1>Map your columns</h1><p class="muted">${batch.filename} · ${batch.rawRows.length} rows</p></div>
     ${wizardSteps("map")}
     ${errorList(errors)}
+    ${aiNotice}
     <section class="card">
+      ${aiPanel}
       ${headerRowPicker(ctx, batch)}
       <div class="flash">We matched your file's columns to our standard fields. Confirm or fix each one. <b>*</b> required. For names, map a single <b>Full name</b> column <i>or</i> <b>First name</b> / <b>Last name</b> — whichever your file has.</div>
       <form method="post" action="/roster/import/${batch.id}/map">
@@ -355,25 +438,57 @@ function mapPage(ctx, { batch, errors }) {
 
 function reviewPage(ctx, { batch, built }) {
   const s = built.summary;
+  const a = batch.assumptions || {};
+  const titleMap = a.aiTitleMap || {};
+  const catMap = a.aiDeptCategory || {};
   const issues = [];
   for (const r of built.rows) for (const x of r._issues) issues.push({ row: r._row, ...x });
+  // On-device anomaly flags (run regardless of the AI toggle).
+  for (const x of flagAnomalies(built.rows)) issues.push(x);
   const errs = issues.filter((x) => x.level === "error").slice(0, 15);
-  const warns = issues.filter((x) => x.level === "warn").slice(0, 15);
+  const warns = issues.filter((x) => x.level === "warn").slice(0, 20);
 
   const flags = (list, cls, icon) => list.map((x) => html`<div class="flag ${cls}"><b>Row ${x.row}</b> · ${x.msg}</div>`);
   const preview = built.rows.slice(0, 25).map((r) => {
     const errFields = new Set(r._issues.filter((x) => x.level === "error").map((x) => x.field));
     const cell = (k, v) => html`<td class="${errFields.has(k) ? "cell-err" : ""}">${v}</td>`;
+    const newTitle = titleMap[r.job_title];
+    const titleCell = newTitle
+      ? html`<td><span class="tnew">${newTitle}</span><div class="sub strike">${r.job_title}</div></td>`
+      : html`<td>${r.job_title || "—"}</td>`;
     return html`<tr class="${r._ok ? "" : "rowerr"}">
       <td class="muted">${r._row}</td>
       ${cell("employee_id", r.employee_id || "—")}
       ${cell("name", r.name || "—")}
       ${cell("department", r.department || "—")}
-      <td>${r.job_title || "—"}</td>
+      ${titleCell}
       ${cell("compensation_amount", r.compensation_amount == null ? "—" : r.compensation_amount.toLocaleString())}
       <td>${r.annual_salary == null ? "—" : money(r.annual_salary)}</td>
     </tr>`;
   });
+
+  const catLabel = Object.fromEntries(FUNCTION_CATEGORIES);
+  const catEntries = Object.entries(catMap);
+  const titleEntries = Object.entries(titleMap);
+  const cleanupCard = aiReady(ctx) ? html`<section class="card">
+      <div class="row-between">
+        <div><h2>✨ AI cleanup</h2><p class="muted small">Standardizes job titles and assigns each department a function category. Sends only your department names and job titles — never salaries or people.</p></div>
+        <form method="post" action="/roster/import/${batch.id}/ai-clean" class="inline">${csrfField(ctx)}<button class="btn ghost sm" type="submit">${batch.assumptions?.aiCleanupRun ? "Re-run" : "Analyze with AI"}</button></form>
+      </div>
+      ${batch.assumptions?.aiCleanupRun
+        ? (catEntries.length || titleEntries.length
+            ? html`<div class="grid2" style="margin-top:8px">
+                <div><h3 class="mini">Department categories (${catEntries.length})</h3>
+                  ${catEntries.length ? html`<table class="table"><tbody>${catEntries.map(([d, c]) => html`<tr><td><b>${d}</b></td><td class="right">${catLabel[c] || c}</td></tr>`)}</tbody></table>` : raw('<p class="muted small">No changes.</p>')}
+                </div>
+                <div><h3 class="mini">Title cleanups (${titleEntries.length})</h3>
+                  ${titleEntries.length ? html`<table class="table"><tbody>${titleEntries.slice(0, 12).map(([o, n]) => html`<tr><td class="muted strike">${o}</td><td>${n}</td></tr>`)}</tbody></table>` : raw('<p class="muted small">No changes.</p>')}
+                </div>
+              </div>
+              <p class="muted small">Applied to the preview below; they take effect when you import.</p>`
+            : raw('<p class="muted small">Nothing to clean up — titles and departments already look standard.</p>'))
+        : raw('<p class="muted small">Optional. Run it to preview standardized titles and department categories before importing.</p>')}
+    </section>` : "";
 
   const body = html`
     <div class="pagehead"><h1>Review &amp; import</h1><p class="muted">${batch.filename}</p></div>
@@ -384,6 +499,7 @@ function reviewPage(ctx, { batch, built }) {
       ${kpiC("Rows with errors", s.withErrors, s.withErrors ? "bad" : "")}
       ${kpiC("Warnings", s.warns, s.warns ? "warn" : "")}
     </div>
+    ${cleanupCard}
     <div class="grid2">
       <section class="card">
         <h2>Data preview</h2>

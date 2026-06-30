@@ -61,6 +61,8 @@ export function normalizeSettings(s = {}) {
     budgeting_approach: oneOf(s.budgeting_approach, BUDGETING, "incremental"),
     require_csuite_approval: bool(s.require_csuite_approval) ? 1 : 0,
     budget_enforcement: oneOf(s.budget_enforcement, ["soft", "hard"], "soft"),
+    ai_import_enabled: bool(s.ai_import_enabled) ? 1 : 0,
+    ai_provider: oneOf(s.ai_provider, ["anthropic", "openai"], "anthropic"),
   };
 }
 

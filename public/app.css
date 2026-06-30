@@ -185,3 +185,12 @@ body.auth{background:var(--bg)}
   .side-user{border-top:none;display:flex;justify-content:space-between;align-items:center}
   .wrap{padding:22px 18px 48px}
 }
+
+/* M8 — AI-assisted import */
+.flash.ok{background:var(--green-soft);border-color:#c3ead2;color:#166534}
+.aiassist{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--brand-soft);border:1px solid #d9ddfb;border-radius:var(--radius-sm);padding:11px 14px;margin-bottom:14px}
+.aiassist b{color:var(--brand-ink)}
+.strike{text-decoration:line-through;opacity:.6}
+.tnew{font-weight:600}
+.mini{font-size:13px;font-weight:600;margin:6px 0 4px}
+b.ok{color:var(--green)} b.off{color:#b91c1c}

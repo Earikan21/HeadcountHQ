@@ -165,6 +165,25 @@ function page(ctx) {
         </div>
       </section>
 
+      <section class="card">
+        <h2>AI-assisted import <span class="hint">optional</span></h2>
+        <p class="muted small">When on, the roster import can suggest column mappings, standardize job titles, and
+        categorize departments. It sends <b>only</b> column headers, department names, and job titles to your provider —
+        <b>never</b> salaries, employee names, or any row of data. Off by default; the deterministic importer always
+        remains the fallback.</p>
+        <p class="small" style="margin:4px 0 10px">Provider key on this server:
+          ${ctx.config.aiImportConfigured
+            ? raw('<b class="ok">configured</b>')
+            : raw('<b class="off">not configured</b> — set <code>AI_IMPORT_API_KEY</code> in the environment to enable')}.</p>
+        <label class="radio"><input type="checkbox" name="ai_import_enabled" ${s.ai_import_enabled ? raw("checked") : ""} ${ctx.config.aiImportConfigured ? "" : raw("disabled")}> Enable AI assistance during import</label>
+        <label style="margin-top:8px">Provider
+          <select name="ai_provider">
+            <option value="anthropic" ${s.ai_provider === "anthropic" ? raw("selected") : ""}>Anthropic (Claude)</option>
+            <option value="openai" ${s.ai_provider === "openai" ? raw("selected") : ""}>OpenAI</option>
+          </select>
+        </label>
+      </section>
+
       <button class="btn" type="submit">Save philosophy</button>
     </form>
 
