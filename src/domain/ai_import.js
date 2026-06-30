@@ -5,8 +5,9 @@
  * timeout, bad JSON, network error) falls back to the deterministic result, so
  * an import never blocks on the model.
  *
- * Each function returns `{ ..., source: "ai" | "heuristic" | "local" }` so the
- * UI and the audit trail can record whether AI was actually used.
+ * Failures are logged to the server console (never to the user, never with
+ * payload) so an admin can diagnose why the AI was unavailable from the host
+ * logs. Each function returns `{ ..., source: "ai" | "heuristic" | "local" }`.
  */
 import { SCHEMA } from "./roster.js";
 import { FUNCTION_CATEGORIES } from "../data/benchmarks.js";
@@ -19,6 +20,12 @@ import {
   LlmClient, buildMappingPrompt, buildClassifyPrompt, buildTitlePrompt, parseJsonObject,
 } from "./llm_client.js";
 
+/** Log an AI failure to the server console (diagnostic only; no payload). */
+function logAiFailure(stage, client, err) {
+  const where = client ? `${client.provider} ${client.model}` : "no-client";
+  console.error(`[ai-import] ${stage} fell back (${where}): ${err && err.message ? err.message : err}`);
+}
+
 /** Build an LlmClient from runtime config, or null when not configured. */
 export function clientFromConfig(config, fetchImpl) {
   if (!config || !config.aiImportConfigured) return null;
@@ -26,6 +33,7 @@ export function clientFromConfig(config, fetchImpl) {
     provider: config.AI_IMPORT_PROVIDER,
     apiKey: config.AI_IMPORT_API_KEY,
     model: config.AI_IMPORT_MODEL,
+    baseUrl: config.AI_IMPORT_BASE_URL,
     fetchImpl,
   });
 }
@@ -47,7 +55,8 @@ export async function suggestMapping({ headers, rows, client }) {
     const confidence = {};
     for (const f of SCHEMA) confidence[f.key] = mapping[f.key] ? "ai" : "none";
     return { mapping, confidence, source: "ai" };
-  } catch {
+  } catch (e) {
+    logAiFailure("mapping", client, e);
     return fallback();
   }
 }
@@ -67,7 +76,8 @@ export async function classifyDepartments({ names, client }) {
     // fill any the model skipped with the deterministic guess
     const filled = { ...keywordDeptCategories(list), ...map };
     return { map: filled, source: "ai" };
-  } catch {
+  } catch (e) {
+    logAiFailure("classify", client, e);
     return { map: keywordDeptCategories(list), source: "heuristic" };
   }
 }
@@ -85,7 +95,8 @@ export async function normalizeTitles({ titles, client }) {
     const text = await client.complete(prompt);
     const map = coerceTitleMap(parseJsonObject(text), list);
     return { map, source: "ai" };
-  } catch {
+  } catch (e) {
+    logAiFailure("titles", client, e);
     return { map: normalizeTitlesLocal(list), source: "local" };
   }
 }

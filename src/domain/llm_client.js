@@ -14,6 +14,11 @@
  *     So no route can hand the network client a free-form string built from
  *     row data — the type system + a runtime check enforce the single path.
  *
+ * Providers: `anthropic` (Messages API), and the OpenAI-compatible family
+ * `openai` and `gemini` (Google's free-tier endpoint). A base-URL override lets
+ * any other OpenAI-compatible host (Groq, OpenRouter, …) be used with
+ * provider=openai.
+ *
  * See tests/redaction.test.js for the full-roster leak test that proves no comp
  * value or employee name can reach the outbound payload.
  */
@@ -137,30 +142,46 @@ export function parseJsonObject(text) {
 
 // ---- network client -----------------------------------------------------
 
+/** Default full endpoints per provider. */
 const ENDPOINTS = {
   anthropic: "https://api.anthropic.com/v1/messages",
   openai: "https://api.openai.com/v1/chat/completions",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 };
+/** Providers that speak the OpenAI Chat Completions request/response shape. */
+const OPENAI_FORMAT = new Set(["openai", "gemini"]);
 
 export class LlmClient {
   /**
    * @param {object} o
-   * @param {"anthropic"|"openai"} o.provider
+   * @param {"anthropic"|"openai"|"gemini"} o.provider
    * @param {string} o.apiKey
    * @param {string} o.model
+   * @param {string} [o.baseUrl]   override base URL for OpenAI-compatible hosts (no /chat/completions)
    * @param {function} [o.fetchImpl]  injectable for tests (defaults to global fetch)
    * @param {number} [o.timeoutMs]
    */
-  constructor({ provider, apiKey, model, fetchImpl, timeoutMs = 15000 }) {
+  constructor({ provider, apiKey, model, baseUrl, fetchImpl, timeoutMs = 15000 }) {
     this.provider = provider;
     this.apiKey = apiKey || "";
     this.model = model;
+    this.baseUrl = (baseUrl || "").trim();
     this.fetchImpl = fetchImpl || globalThis.fetch;
     this.timeoutMs = timeoutMs;
   }
 
+  /** The resolved endpoint URL for this provider (or null if unknown). */
+  endpoint() {
+    if (this.provider === "anthropic") return ENDPOINTS.anthropic;
+    if (OPENAI_FORMAT.has(this.provider)) {
+      if (this.baseUrl) return this.baseUrl.replace(/\/+$/, "") + "/chat/completions";
+      return ENDPOINTS[this.provider];
+    }
+    return null;
+  }
+
   get configured() {
-    return Boolean(this.apiKey) && Boolean(ENDPOINTS[this.provider]);
+    return Boolean(this.apiKey) && Boolean(this.endpoint());
   }
 
   /** Send a RedactedPrompt; resolve to the model's raw text reply. */
@@ -169,7 +190,7 @@ export class LlmClient {
       throw new TypeError("LlmClient.complete requires a RedactedPrompt (refusing raw input).");
     }
     if (!this.configured) throw new Error("LLM client is not configured.");
-    const url = ENDPOINTS[this.provider];
+    const url = this.endpoint();
     const { headers, body } = this._request(prompt);
 
     const ctrl = new AbortController();
@@ -182,7 +203,10 @@ export class LlmClient {
     }
     if (!res || !res.ok) {
       const status = res ? res.status : "no-response";
-      throw new Error(`LLM request failed (${status}).`);
+      // Include the provider's own error message (not our payload) to aid diagnosis.
+      let detail = "";
+      try { if (res && res.text) detail = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 240); } catch { /* ignore */ }
+      throw new Error(`LLM request failed (${status})${detail ? ": " + detail : ""}`);
     }
     const data = await res.json();
     return this._extractText(data);
@@ -204,7 +228,7 @@ export class LlmClient {
         },
       };
     }
-    // openai
+    // OpenAI-compatible (openai, gemini, or any base-URL override)
     return {
       headers: {
         "content-type": "application/json",
@@ -227,7 +251,7 @@ export class LlmClient {
       return part.text;
     }
     const msg = data && data.choices && data.choices[0] && data.choices[0].message;
-    if (!msg || typeof msg.content !== "string") throw new Error("unexpected OpenAI response shape");
+    if (!msg || typeof msg.content !== "string") throw new Error("unexpected OpenAI-compatible response shape");
     return msg.content;
   }
 }

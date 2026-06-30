@@ -82,6 +82,35 @@ test("LlmClient parses Anthropic + OpenAI shapes via injected fetch", async () =
   assert.equal(await openai.complete(prompt), "{}");
 });
 
+test("Gemini provider uses the Google endpoint with Bearer auth + OpenAI shape", async () => {
+  const prompt = buildTitlePrompt({ jobTitles: ["sr eng"] });
+  let seenUrl, seenAuth;
+  const gemini = new LlmClient({
+    provider: "gemini", apiKey: "gkey", model: "gemini-2.5-flash",
+    fetchImpl: async (url, opts) => {
+      seenUrl = url; seenAuth = opts.headers.authorization;
+      return { ok: true, json: async () => ({ choices: [{ message: { content: '{"sr eng":"Senior Engineer"}' } }] }) };
+    },
+  });
+  assert.equal(gemini.endpoint(), "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
+  assert.equal(await gemini.complete(prompt), '{"sr eng":"Senior Engineer"}');
+  assert.match(seenUrl, /generativelanguage\.googleapis\.com/);
+  assert.equal(seenAuth, "Bearer gkey");
+});
+
+test("base-URL override points an OpenAI-format provider at another host (e.g. Groq)", async () => {
+  const prompt = buildTitlePrompt({ jobTitles: ["x"] });
+  let seenUrl;
+  const groq = new LlmClient({
+    provider: "openai", apiKey: "k", model: "llama-3.3-70b-versatile",
+    baseUrl: "https://api.groq.com/openai/v1/",  // trailing slash tolerated
+    fetchImpl: async (url) => { seenUrl = url; return { ok: true, json: async () => ({ choices: [{ message: { content: "{}" } }] }) }; },
+  });
+  assert.equal(groq.endpoint(), "https://api.groq.com/openai/v1/chat/completions");
+  await groq.complete(prompt);
+  assert.equal(seenUrl, "https://api.groq.com/openai/v1/chat/completions");
+});
+
 test("LlmClient throws on non-ok responses and when unconfigured", async () => {
   const prompt = buildTitlePrompt({ jobTitles: ["x"] });
   const bad = new LlmClient({ provider: "anthropic", apiKey: "k", model: "m", fetchImpl: async () => ({ ok: false, status: 429 }) });

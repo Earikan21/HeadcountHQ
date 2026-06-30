@@ -15,6 +15,10 @@ const PHASE_LABELS = {
   mid: "Mid — multiple departments", scale: "Scale — large, optimizing",
 };
 
+const PROVIDER_LABELS = {
+  anthropic: "Anthropic (Claude)", openai: "OpenAI", gemini: "Google Gemini",
+};
+
 export function registerPhilosophyRoutes(router) {
   router.get("/settings", (ctx) => ctx.redirect("/philosophy"));
 
@@ -98,6 +102,8 @@ function page(ctx) {
     </tr>`;
   }) : raw('<tr><td colspan="4" class="muted">Add departments (via the roster import) to set a target balance.</td></tr>');
 
+  const providerLabel = PROVIDER_LABELS[ctx.config.AI_IMPORT_PROVIDER] || ctx.config.AI_IMPORT_PROVIDER;
+
   const body = html`
     <div class="pagehead">
       <h1>Headcount philosophy</h1>
@@ -171,17 +177,14 @@ function page(ctx) {
         categorize departments. It sends <b>only</b> column headers, department names, and job titles to your provider —
         <b>never</b> salaries, employee names, or any row of data. Off by default; the deterministic importer always
         remains the fallback.</p>
-        <p class="small" style="margin:4px 0 10px">Provider key on this server:
+        <p class="small" style="margin:4px 0 10px">Provider: <b>${providerLabel}</b> · Key on this server:
           ${ctx.config.aiImportConfigured
             ? raw('<b class="ok">configured</b>')
             : raw('<b class="off">not configured</b> — set <code>AI_IMPORT_API_KEY</code> in the environment to enable')}.</p>
         <label class="radio"><input type="checkbox" name="ai_import_enabled" ${s.ai_import_enabled ? raw("checked") : ""} ${ctx.config.aiImportConfigured ? "" : raw("disabled")}> Enable AI assistance during import</label>
-        <label style="margin-top:8px">Provider
-          <select name="ai_provider">
-            <option value="anthropic" ${s.ai_provider === "anthropic" ? raw("selected") : ""}>Anthropic (Claude)</option>
-            <option value="openai" ${s.ai_provider === "openai" ? raw("selected") : ""}>OpenAI</option>
-          </select>
-        </label>
+        <p class="muted small" style="margin-top:8px">Provider, model, and key are configured on the server (environment
+        variables), not here. Google Gemini has a free tier — set <code>AI_IMPORT_PROVIDER=gemini</code> with a
+        free key from Google AI Studio.</p>
       </section>
 
       <button class="btn" type="submit">Save philosophy</button>

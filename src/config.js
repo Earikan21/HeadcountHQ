@@ -30,6 +30,13 @@ export function loadDotEnv(path = ".env", env = process.env) {
 
 const DEV_SECRET_PREFIX = "dev-only-insecure";
 
+/** Built-in default model per provider when AI_IMPORT_MODEL isn't set. */
+const DEFAULT_MODELS = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+  gemini: "gemini-2.5-flash",
+};
+
 /**
  * Build the validated config object. Throws an Error with a readable message if
  * anything required is missing or invalid.
@@ -54,10 +61,15 @@ export function loadConfig(env = process.env) {
   // Optional AI-assisted import. The key is read here only; it is never stored in
   // the DB and never rendered back to any page. With no key, the feature is simply
   // unavailable and the import falls back to the deterministic mapper.
-  const AI_IMPORT_PROVIDER = oneOf(env.AI_IMPORT_PROVIDER, ["anthropic", "openai"], "anthropic");
+  //   - anthropic / openai  -> talk to their own APIs
+  //   - gemini              -> Google's free-tier API via its OpenAI-compatible endpoint
+  //   - AI_IMPORT_BASE_URL  -> override the base URL for any OTHER OpenAI-compatible
+  //                            provider (e.g. Groq, OpenRouter). Used with provider=openai.
+  const AI_IMPORT_PROVIDER = oneOf(env.AI_IMPORT_PROVIDER, ["anthropic", "openai", "gemini"], "anthropic");
   const AI_IMPORT_API_KEY = (env.AI_IMPORT_API_KEY || "").trim();
+  const AI_IMPORT_BASE_URL = (env.AI_IMPORT_BASE_URL || "").trim();
   const AI_IMPORT_MODEL = (env.AI_IMPORT_MODEL || "").trim() ||
-    (AI_IMPORT_PROVIDER === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001");
+    DEFAULT_MODELS[AI_IMPORT_PROVIDER] || DEFAULT_MODELS.anthropic;
 
   if (SESSION_SECRET.length < 16) {
     errors.push("SESSION_SECRET must be set to at least 16 characters.");
@@ -85,6 +97,7 @@ export function loadConfig(env = process.env) {
     emailEnabled: SMTP_HOST.length > 0,
     AI_IMPORT_PROVIDER,
     AI_IMPORT_API_KEY,
+    AI_IMPORT_BASE_URL,
     AI_IMPORT_MODEL,
     aiImportConfigured: AI_IMPORT_API_KEY.length > 0,
   };
