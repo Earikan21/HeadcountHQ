@@ -11,6 +11,15 @@ import { listDepartments } from "../repos/departments.js";
 import { getSettings } from "../repos/settings.js";
 import { logAudit } from "../repos/audit.js";
 
+/** Money a department's headcount budget implies: current cost + midpoint of the
+ *  expected cost of its still-unfilled budgeted positions. Idempotent. */
+function impliedMoneyForDept(r) {
+  const unfilled = Math.max(0, r.effHeadcount - r.currentEmployees);
+  const range = expectedRange(unfilled, r.costBand);
+  const mid = range ? Math.round((range.low + range.high) / 2) : 0;
+  return Math.round((r.currentCost || 0) + mid);
+}
+
 export function registerBudgetRoutes(router) {
   router.get("/budgets", (ctx) => {
     if (!requirePermission(ctx, canSetBudgets)) return;
@@ -30,6 +39,16 @@ export function registerBudgetRoutes(router) {
     }
     logAudit(ctx.db, { userId: ctx.user.id, action: "budgets.updated", entity: "budget_envelope", detail: { mode } });
     ctx.redirect(`/budgets?mode=${mode}&msg=Saved`);
+  });
+
+  // Fill every department's money budget from what its headcount budget implies.
+  router.post("/budgets/fill-from-headcount", (ctx) => {
+    if (!requirePermission(ctx, canSetBudgets)) return;
+    const { rows } = allReconciliation(ctx.db);
+    let applied = 0;
+    for (const r of rows) { setEnvelopeMoney(ctx.db, r.id, impliedMoneyForDept(r), ctx.user.id); applied++; }
+    logAudit(ctx.db, { userId: ctx.user.id, action: "budgets.filled_from_headcount", entity: "budget_envelope", detail: { departments: applied } });
+    ctx.redirect(`/budgets?mode=money&msg=Money+budgets+set+from+the+headcount+budget`);
   });
 }
 
@@ -122,6 +141,10 @@ function page(ctx, mode) {
           </tr>`;
         });
     body = html`${head}
+      ${noDepts ? "" : html`<form method="post" action="/budgets/fill-from-headcount" class="inline" style="margin:0 0 14px">
+        ${csrfField(ctx)}<button class="btn ghost" type="submit">↳ Fill money budgets from the headcount budget</button>
+        <span class="muted small" style="margin-left:8px">Sets each department's money budget to cover its budgeted positions (current cost + the implied cost of unfilled ones).</span>
+      </form>`}
       <form method="post" action="/budgets">
         ${csrfField(ctx)}<input type="hidden" name="mode" value="money">
         <section class="card">
@@ -134,7 +157,7 @@ function page(ctx, mode) {
         </div>
         <section class="card">
           <h2>Allocate money to departments</h2>
-          <p class="muted small">Allocations start at each team's current committed cost. The hint shows what the headcount budget implies for still-unfilled positions.</p>
+          <p class="muted small">Allocations start at each team's current committed cost. The hint shows what the headcount budget implies for still-unfilled positions — or use the button above to fill them all at once.</p>
           <table class="table">
             <thead><tr><th>Department</th><th class="right">Committed</th><th>Allocated</th><th>Spend</th></tr></thead>
             <tbody>${deptRows}</tbody>
