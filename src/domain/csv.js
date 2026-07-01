@@ -45,15 +45,57 @@ export function parseMatrix(text) {
 }
 
 /**
- * Pick the most likely header row: the first row that has at least two non-empty
- * cells (skips single-cell title rows), preferring a row whose width matches the
- * data below it. Falls back to row 0.
+ * Words that appear in real roster column headers. Used to identify the actual
+ * header row even when a file starts with title/metadata rows (e.g. a company
+ * name, "Printed on 6/19/2026", export timestamps) that also have several cells.
+ */
+const HEADER_WORDS = new Set([
+  "employee", "emp", "id", "eid", "number", "no",
+  "name", "first", "firstname", "last", "lastname", "full", "given", "surname",
+  "department", "dept", "team", "division", "org", "unit", "group", "function",
+  "title", "role", "position", "job",
+  "salary", "compensation", "comp", "pay", "wage", "rate", "amount", "base", "annual",
+  "unit", "frequency", "period",
+  "manager", "supervisor", "reports",
+  "status", "employment", "type", "classification",
+  "email", "start", "hire", "date", "level", "location", "office",
+]);
+
+/** Tokenize a cell into lowercase word tokens. */
+function tokens(cell) {
+  return String(cell == null ? "" : cell).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+/** How many cells in a row look like header labels (contain a known header word). */
+function headerScore(row) {
+  let score = 0;
+  for (const cell of row) {
+    const ts = tokens(cell);
+    if (ts.length && ts.some((t) => HEADER_WORDS.has(t))) score++;
+  }
+  return score;
+}
+
+/**
+ * Pick the most likely header row. Strategy:
+ *   1. Among the first ~15 rows, choose the row with the MOST header-like cells
+ *      (cells whose words match common roster column names). This correctly skips
+ *      title/metadata preamble rows that happen to have multiple cells.
+ *   2. If no row is clearly header-like (best score < 2), fall back to the first
+ *      row with at least two non-empty cells (the original heuristic).
  */
 export function detectHeaderRow(matrix) {
   if (!matrix.length) return 0;
-  const nonEmptyCount = (r) => r.filter((c) => c.trim() !== "").length;
+  const limit = Math.min(matrix.length, 15);
+  let bestIdx = -1, bestScore = 0;
+  for (let i = 0; i < limit; i++) {
+    const score = headerScore(matrix[i]);
+    if (score > bestScore) { bestScore = score; bestIdx = i; } // strictly greater keeps the earliest best
+  }
+  if (bestScore >= 2) return bestIdx;
+  // Fallback: first row with >= 2 non-empty cells.
   for (let i = 0; i < matrix.length; i++) {
-    if (nonEmptyCount(matrix[i]) >= 2) return i;
+    if (matrix[i].filter((c) => c.trim() !== "").length >= 2) return i;
   }
   return 0;
 }

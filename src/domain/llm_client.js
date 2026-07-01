@@ -2,25 +2,21 @@
  * Redaction layer + LLM client — the ONLY code that may construct a prompt for
  * an external model, and the only code that performs the network call.
  *
- * The privacy promise of the AI-import feature lives here. Two mechanisms:
+ * The privacy promise of the AI-IMPORT feature lives here:
+ *  1. `RedactedPrompt` is a typed token built only by the prompt builders below.
+ *     Each builder accepts ONLY privacy-safe inputs (headers, type/stat profiles,
+ *     distinct department names, job titles). Salary values, employee names, and
+ *     raw rows are never accepted. `complete()` refuses anything else.
+ *  2. `completeFullContent()` is the deliberately separate escape hatch used ONLY
+ *     by the opt-in AI full-read import (which sends raw file contents).
  *
- *  1. `RedactedPrompt` is a typed token that can only be built by the prompt
- *     builders in this file. Each builder accepts ONLY privacy-safe inputs
- *     (column headers, type/stat profiles, distinct department names, distinct
- *     job titles) and validates that those inputs are plain strings/descriptors.
- *     Salary values, employee names, and raw rows are never accepted.
- *
- *  2. `LlmClient.complete` refuses anything that is not a `RedactedPrompt`.
- *     So no route can hand the network client a free-form string built from
- *     row data — the type system + a runtime check enforce the single path.
+ * `chat()` is the generic text path used by the headcount ASSISTANT (request
+ * justifications, cost/band estimates, ask-your-data). Callers assemble their own
+ * (non-import) context; it is not bound by the import redaction rules.
  *
  * Providers: `anthropic` (Messages API), and the OpenAI-compatible family
- * `openai` and `gemini` (Google's free-tier endpoint). A base-URL override lets
- * any other OpenAI-compatible host (Groq, OpenRouter, …) be used with
- * provider=openai.
- *
- * See tests/redaction.test.js for the full-roster leak test that proves no comp
- * value or employee name can reach the outbound payload.
+ * `openai` and `gemini`. A base-URL override lets any other OpenAI-compatible
+ * host (Groq, OpenRouter, …) be used with provider=openai.
  */
 
 const KIND = Object.freeze({ MAPPING: "mapping", CLASSIFY: "classify", TITLES: "titles" });
@@ -80,20 +76,36 @@ export function buildMappingPrompt({ headers, profiles, schema }) {
     }
   }
   const fieldLines = schema
-    .map((f) => `- ${f.key}: ${f.label}${f.required ? " (required)" : ""}`)
+    .map((f) => `- ${f.key}: ${f.label}${f.required ? " (REQUIRED)" : ""}`)
     .join("\n");
   const colLines = profiles
-    .map((p) => `- "${p.header}" — ${p.kind}, filled ${Math.round(p.fillRate * 100)}%, distinct ${Math.round(p.distinctRatio * 100)}%`)
+    .map((p) => `- "${p.header}"  [${p.kind}, ${Math.round(p.fillRate * 100)}% filled, ${Math.round(p.distinctRatio * 100)}% distinct]`)
     .join("\n");
   const system =
-    "You map spreadsheet columns to a fixed set of roster fields. You are given " +
-    "ONLY column headers and coarse type statistics — never any cell values. " +
-    "Reply with a single JSON object mapping each field key to the EXACT header " +
-    "string that best fits, or null if none fits. Use each header at most once. " +
-    "No prose, JSON only.";
+    "You are a precise data-mapping assistant for a headcount tool. You match a " +
+    "spreadsheet's columns to a fixed set of roster fields, using ONLY the column " +
+    "headers and coarse type statistics provided — you never see cell values. " +
+    "Respond with a SINGLE JSON object and nothing else (no markdown, no prose).";
   const user =
-    `Target fields:\n${fieldLines}\n\nSource columns:\n${colLines}\n\n` +
-    `Return JSON like {"employee_id":"EmpID","name":"Full Name",...}.`;
+`Map each target field to the source column that best fits.
+
+Target fields:
+${fieldLines}
+
+Source columns (choose from these EXACT header strings, copy them verbatim):
+${colLines}
+
+Rules:
+- Return a JSON object whose keys are the target field keys above.
+- Each value must be one of the EXACT source header strings, or null if no column fits.
+- Use each source header at most once.
+- Map every field you can; only use null when truly nothing matches.
+- Names: if there is ONE combined name column, map it to "name" and leave first_name/last_name null. If names are split, map "first_name" and "last_name" and leave "name" null.
+- "compensation_amount" is the pay number (salary/base/rate). "compensation_unit" is the period (annual/hourly/monthly), if a separate column exists.
+- "employee_id" is any unique identifier column (ID, employee number, etc).
+- A numeric, highly-distinct column is usually compensation or an ID; a low-distinct text column is usually department, status, or type.
+
+Example shape: {"employee_id":"Emp #","name":"Full Name","department":"Team","job_title":"Role","compensation_amount":"Base Pay","compensation_unit":null,"manager":"Reports To","employee_type":"Type","employment_status":"Status","first_name":null,"last_name":null}`;
   return new RedactedPrompt(BUILD_TOKEN, KIND.MAPPING, system, user);
 }
 
@@ -103,13 +115,23 @@ export function buildClassifyPrompt({ departmentNames, categories }) {
   if (!Array.isArray(categories)) throw new TypeError("categories must be an array");
   const catLines = categories.map(([k, label]) => `- ${k}: ${label}`).join("\n");
   const system =
-    "You classify department names into one function category each. You are given " +
-    "ONLY a list of department names — no other data. Reply with a single JSON " +
-    "object mapping each department name to one category key. JSON only, no prose.";
+    "You classify each department name into exactly one function category. You are " +
+    "given ONLY a list of department names. Respond with a SINGLE JSON object and " +
+    "nothing else (no markdown, no prose).";
   const user =
-    `Categories:\n${catLines}\n\nDepartments:\n` +
-    departmentNames.map((d) => `- ${d}`).join("\n") +
-    `\n\nReturn JSON like {"Engineering":"rnd","Sales":"sm"}.`;
+`Assign every department below to ONE category key.
+
+Categories:
+${catLines}
+
+Guidance: engineering/product/design/data/IT -> rnd; sales/marketing/growth/revenue -> sm;
+finance/HR/people/legal/ops/admin/recruiting -> ga; customer success/support/onboarding -> cs;
+anything that fits none -> other.
+
+Departments:
+${departmentNames.map((d) => `- ${d}`).join("\n")}
+
+Return JSON mapping each department name to one category key, e.g. {"Engineering":"rnd","Sales":"sm","People Ops":"ga"}.`;
   return new RedactedPrompt(BUILD_TOKEN, KIND.CLASSIFY, system, user);
 }
 
@@ -117,13 +139,18 @@ export function buildClassifyPrompt({ departmentNames, categories }) {
 export function buildTitlePrompt({ jobTitles }) {
   assertStringArray(jobTitles, "jobTitles");
   const system =
-    "You normalize messy job titles into clean, standard forms (expand obvious " +
-    "abbreviations, fix casing, keep meaning). You are given ONLY a list of title " +
-    "strings. Reply with a single JSON object mapping each ORIGINAL title to its " +
-    "cleaned form. Only include titles you actually changed. JSON only, no prose.";
+    "You normalize messy job titles into clean, standard forms: expand obvious " +
+    "abbreviations (Sr->Senior, Mgr->Manager, Eng->Engineer, VP stays VP), fix " +
+    "capitalization, keep the meaning. You are given ONLY a list of title strings. " +
+    "Respond with a SINGLE JSON object and nothing else (no markdown, no prose).";
   const user =
-    `Titles:\n` + jobTitles.map((t) => `- ${t}`).join("\n") +
-    `\n\nReturn JSON like {"sr swe":"Senior Software Engineer"}.`;
+`Clean up these job titles.
+
+Titles:
+${jobTitles.map((t) => `- ${t}`).join("\n")}
+
+Return a JSON object mapping each ORIGINAL title (verbatim) to its cleaned form.
+Only include titles you actually changed. Example: {"sr swe":"Senior Software Engineer","mktg mgr":"Marketing Manager"}.`;
   return new RedactedPrompt(BUILD_TOKEN, KIND.TITLES, system, user);
 }
 
@@ -161,7 +188,7 @@ export class LlmClient {
    * @param {function} [o.fetchImpl]  injectable for tests (defaults to global fetch)
    * @param {number} [o.timeoutMs]
    */
-  constructor({ provider, apiKey, model, baseUrl, fetchImpl, timeoutMs = 15000 }) {
+  constructor({ provider, apiKey, model, baseUrl, fetchImpl, timeoutMs = 30000 }) {
     this.provider = provider;
     this.apiKey = apiKey || "";
     this.model = model;
@@ -184,14 +211,37 @@ export class LlmClient {
     return Boolean(this.apiKey) && Boolean(this.endpoint());
   }
 
-  /** Send a RedactedPrompt; resolve to the model's raw text reply. */
+  /** Send a RedactedPrompt (privacy-safe import path); resolve to the text reply. */
   async complete(prompt) {
     if (!(prompt instanceof RedactedPrompt)) {
       throw new TypeError("LlmClient.complete requires a RedactedPrompt (refusing raw input).");
     }
+    return this._send(prompt.system, prompt.user, 1024);
+  }
+
+  /**
+   * FULL-CONTENT import path — used ONLY by the opt-in AI full-read import. Sends
+   * raw system/user text (which intentionally contains file contents).
+   */
+  async completeFullContent(system, user, maxTokens = 4096) {
+    if (typeof system !== "string" || typeof user !== "string") {
+      throw new TypeError("completeFullContent requires string system/user.");
+    }
+    return this._send(system, user, maxTokens);
+  }
+
+  /** Generic text path for the headcount ASSISTANT (justify / estimate / chat). */
+  async chat(system, user, maxTokens = 1024) {
+    if (typeof system !== "string" || typeof user !== "string") {
+      throw new TypeError("chat requires string system/user.");
+    }
+    return this._send(system, user, maxTokens);
+  }
+
+  async _send(system, user, maxTokens) {
     if (!this.configured) throw new Error("LLM client is not configured.");
     const url = this.endpoint();
-    const { headers, body } = this._request(prompt);
+    const { headers, body } = this._request(system, user, maxTokens);
 
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
@@ -203,7 +253,6 @@ export class LlmClient {
     }
     if (!res || !res.ok) {
       const status = res ? res.status : "no-response";
-      // Include the provider's own error message (not our payload) to aid diagnosis.
       let detail = "";
       try { if (res && res.text) detail = (await res.text()).replace(/\s+/g, " ").trim().slice(0, 240); } catch { /* ignore */ }
       throw new Error(`LLM request failed (${status})${detail ? ": " + detail : ""}`);
@@ -212,7 +261,7 @@ export class LlmClient {
     return this._extractText(data);
   }
 
-  _request(prompt) {
+  _request(system, user, maxTokens) {
     if (this.provider === "anthropic") {
       return {
         headers: {
@@ -222,9 +271,10 @@ export class LlmClient {
         },
         body: {
           model: this.model,
-          max_tokens: 1024,
-          system: prompt.system,
-          messages: [{ role: "user", content: prompt.user }],
+          max_tokens: maxTokens,
+          temperature: 0,
+          system,
+          messages: [{ role: "user", content: user }],
         },
       };
     }
@@ -236,9 +286,11 @@ export class LlmClient {
       },
       body: {
         model: this.model,
+        temperature: 0,
+        max_tokens: maxTokens,
         messages: [
-          { role: "system", content: prompt.system },
-          { role: "user", content: prompt.user },
+          { role: "system", content: system },
+          { role: "user", content: user },
         ],
       },
     };

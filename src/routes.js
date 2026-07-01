@@ -14,6 +14,7 @@ import { registerBudgetRoutes } from "./routes/budgets.js";
 import { registerPlanningRoutes } from "./routes/planning.js";
 import { registerAuditRoutes } from "./routes/audit.js";
 import { registerOrgRoutes } from "./routes/org.js";
+import { registerAssistantRoutes } from "./routes/assistant.js";
 
 export function registerRoutes(router, _deps) {
   router.get("/health", (ctx) => ctx.send(200, "text/plain; charset=utf-8", "Server healthy"));
@@ -31,4 +32,5 @@ export function registerRoutes(router, _deps) {
   registerPlanningRoutes(router);
   registerAuditRoutes(router);
   registerOrgRoutes(router);
+  registerAssistantRoutes(router);
 }

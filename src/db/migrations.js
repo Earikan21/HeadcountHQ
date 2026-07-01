@@ -385,4 +385,21 @@ export const MIGRATIONS = [
       `);
     },
   },
+  {
+    name: "2026_07_01_014_ai_full_read",
+    up(db) {
+      // Opt-in mode: send the full file contents (incl. names/salaries) to the AI
+      // to interpret messy / non-tabular layouts. OFF by default; separate from the
+      // privacy-safe structure-only import.
+      db.exec(`ALTER TABLE workspace_settings ADD COLUMN ai_full_read_enabled INTEGER NOT NULL DEFAULT 0;`);
+    },
+  },
+  {
+    name: "2026_07_01_015_ai_assistant",
+    up(db) {
+      // Opt-in headcount assistant (request justifications, cost/band estimates,
+      // ask-your-data chat). OFF by default. Uses the same provider/key as import.
+      db.exec(`ALTER TABLE workspace_settings ADD COLUMN ai_assistant_enabled INTEGER NOT NULL DEFAULT 0;`);
+    },
+  },
 ];

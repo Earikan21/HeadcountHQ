@@ -27,7 +27,6 @@ before(async () => {
     }
     return { ok: true, json: async () => ({ content: [{ type: "text", text }] }) };
   };
-  // One-time owner setup + enable AI (setup only works for the first user).
   const c = makeClient(srv.base);
   await c.get("/setup");
   await c.post("/setup", { name: "Owner Ada", email: "ada@acme.co", password: "supersecret123" });
@@ -52,7 +51,7 @@ const CSV = [
 test("settings shows AI configured and never echoes a key", async () => {
   const c = await login();
   const page = await (await c.get("/philosophy")).text();
-  assert.match(page, /AI-assisted import/);
+  assert.match(page, /Assisted import/);
   assert.match(page, /configured/);
   assert.ok(!page.includes("test-key"), "the API key must never be rendered");
 });
@@ -66,7 +65,6 @@ test("AI map -> AI cleanup -> commit applies suggestions", async () => {
   const aiMap = await c.post(`/roster/import/${id}/ai-map`, {});
   assert.equal(aiMap.status, 303);
   assert.match(aiMap.headers.get("location"), /ai=1/);
-  // follow the redirect (carries ?ai=1) so the confirmation notice renders
   const mapPage = await (await c.get(aiMap.headers.get("location"))).text();
   assert.match(mapPage, /AI suggested the mappings/);
   const mapping = JSON.parse(srv.db.prepare("SELECT mapping FROM import_batches WHERE id=?").get(Number(id)).mapping);
@@ -92,7 +90,6 @@ test("AI map -> AI cleanup -> commit applies suggestions", async () => {
   const eng = srv.db.prepare("SELECT function_category FROM departments WHERE name='Engineering'").get();
   assert.equal(eng.function_category, "rnd");
 
-  // audit trail recorded the AI runs (not the payload)
   const runs = srv.db.prepare("SELECT * FROM import_runs WHERE import_batch_id=?").all(Number(id));
   assert.ok(runs.some((r) => r.phase === "mapping" && r.used_ai === 1));
   assert.ok(runs.some((r) => r.phase === "cleanup"));
@@ -106,7 +103,7 @@ test("on-device anomaly flagging surfaces a suspicious salary without AI", async
     "E-11,Bo,Engineering,Engineer,130000,Annual,Active",
     "E-12,Cy,Engineering,Engineer,128000,Annual,Active",
     "E-13,Di,Engineering,Engineer,140000,Annual,Active",
-    "E-14,Ed,Engineering,Engineer,50,Annual,Active",   // typo: $50/yr
+    "E-14,Ed,Engineering,Engineer,50,Annual,Active",
   ].join("\n");
   const up = await c.upload("/roster/import", {}, { field: "file", filename: "r.csv", content: csv });
   const id = up.headers.get("location").match(/\/roster\/import\/(\d+)\/map/)[1];
@@ -121,13 +118,11 @@ test("on-device anomaly flagging surfaces a suspicious salary without AI", async
 
 test("AI routes are inert when the toggle is off", async () => {
   const c = await login();
-  // turn AI off
-  await c.post("/philosophy", { ai_provider: "anthropic" }); // no ai_import_enabled => off
+  await c.post("/philosophy", { ai_provider: "anthropic" });
   const up = await c.upload("/roster/import", {}, { field: "file", filename: "r.csv", content: CSV });
   const id = up.headers.get("location").match(/\/roster\/import\/(\d+)\/map/)[1];
   const aiMap = await c.post(`/roster/import/${id}/ai-map`, {});
   assert.equal(aiMap.status, 303);
   assert.ok(!/ai=1/.test(aiMap.headers.get("location")));
-  // re-enable so workspace state is sane afterward
   await c.post("/philosophy", { ai_import_enabled: "on", ai_provider: "anthropic" });
 });

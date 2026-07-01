@@ -194,3 +194,13 @@ body.auth{background:var(--bg)}
 .tnew{font-weight:600}
 .mini{font-size:13px;font-weight:600;margin:6px 0 4px}
 b.ok{color:var(--green)} b.off{color:#b91c1c}
+
+/* M8.2 — AI full-read (opt-in, sends contents) */
+.aiassist.warn-assist{background:var(--amber-soft);border-color:#f6dcb8}
+.aiassist.warn-assist b{color:#92400e}
+.warnbox{background:var(--amber-soft);border:1px solid #f6dcb8;border-radius:var(--radius-sm);padding:12px 14px}
+.warnbox b{color:#92400e}
+
+/* M9 — headcount assistant */
+.quickrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.assistant-answer p{margin:0 0 8px} .assistant-answer ul{margin:4px 0 10px 18px} .assistant-answer li{margin:3px 0}

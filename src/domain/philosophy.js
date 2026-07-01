@@ -63,6 +63,8 @@ export function normalizeSettings(s = {}) {
     budget_enforcement: oneOf(s.budget_enforcement, ["soft", "hard"], "soft"),
     ai_import_enabled: bool(s.ai_import_enabled) ? 1 : 0,
     ai_provider: oneOf(s.ai_provider, ["anthropic", "openai"], "anthropic"),
+    ai_full_read_enabled: bool(s.ai_full_read_enabled) ? 1 : 0,
+    ai_assistant_enabled: bool(s.ai_assistant_enabled) ? 1 : 0,
   };
 }
 

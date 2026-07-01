@@ -75,25 +75,30 @@ export function columnProfiles(headers, rows) {
 // Mapping coercion — turn an untrusted AI mapping into a safe one.
 // ---------------------------------------------------------------------------
 
+const normKey = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
+
 /**
  * Coerce an arbitrary object (e.g. parsed AI JSON) into a valid mapping:
  *  - only known SCHEMA keys are kept,
- *  - each value must be an ACTUAL header (else dropped),
+ *  - each value must resolve to an ACTUAL header — exact match, or a
+ *    case/punctuation-insensitive match (so "employee id" still finds
+ *    "Employee ID"); anything else is dropped,
  *  - a given header is used at most once (first key wins).
  * Returns a mapping with every SCHEMA key present (null when unmapped).
  */
 export function coerceMapping(aiMapping, headers) {
   const headerSet = new Set(headers);
+  const byNorm = new Map();
+  for (const h of headers) { const k = normKey(h); if (!byNorm.has(k)) byNorm.set(k, h); }
   const used = new Set();
   const out = {};
   for (const key of SCHEMA_KEYS) out[key] = null;
   if (aiMapping && typeof aiMapping === "object") {
     for (const key of SCHEMA_KEYS) {
       const v = aiMapping[key];
-      if (typeof v === "string" && headerSet.has(v) && !used.has(v)) {
-        out[key] = v;
-        used.add(v);
-      }
+      if (typeof v !== "string") continue;
+      const header = headerSet.has(v) ? v : byNorm.get(normKey(v));
+      if (header && !used.has(header)) { out[key] = header; used.add(header); }
     }
   }
   return out;

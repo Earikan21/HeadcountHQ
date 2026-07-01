@@ -4,11 +4,15 @@ import { requireAuth, requirePermission } from "../middleware.js";
 import { canCreateRequest, canApproveRequests, departmentScope, canSeeAllDepartments } from "../authz.js";
 import * as RQ from "../domain/requests.js";
 import * as BUD from "../domain/budget.js";
+import { mixVsTarget } from "../domain/philosophy.js";
 import { createRequest, getRequest, listRequests, statusHistory, setStatus } from "../repos/requests.js";
 import { departmentReconciliation, departmentUsage, getEnvelope } from "../repos/budgets.js";
 import { listDepartments, getDepartment } from "../repos/departments.js";
 import { getSettings } from "../repos/settings.js";
+import { headcountRollup } from "../repos/seats.js";
+import { getDepartmentTargets } from "../repos/targets.js";
 import { createSeat, getSeat } from "../repos/seats.js";
+import { clientFromConfig, draftJustification, estimateRole } from "../domain/assistant.js";
 import { logAudit } from "../repos/audit.js";
 
 const STATUS_PILL = {
@@ -19,6 +23,24 @@ const STATUS_PILL = {
   declined: '<span class="pill off">Declined</span>',
 };
 const TYPE_LABEL = { net_new: "Net-new", backfill: "Backfill" };
+
+/** AI assistant available (configured + toggled on)? */
+const assistReady = (ctx) => Boolean(ctx.config.aiImportConfigured) && Boolean(getSettings(ctx.db).ai_assistant_enabled);
+
+/** A short "this dept is X% under/over target" note to ground a justification. */
+function deptTargetNote(db, deptId) {
+  const dept = getDepartment(db, deptId);
+  if (!dept) return "";
+  const roll = headcountRollup(db);
+  const targets = getDepartmentTargets(db);
+  const actualByDept = {}, targetByDept = {};
+  for (const d of roll.departments) actualByDept[d.department] = d.active;
+  for (const [k, v] of Object.entries(targets)) targetByDept[k] = v.target_pct;
+  const m = mixVsTarget(actualByDept, targetByDept).find((x) => x.name === dept.name);
+  if (!m || m.targetPct == null) return "";
+  const dir = m.variance < 0 ? `${Math.abs(m.variance)}% UNDER` : `${m.variance}% OVER`;
+  return `${dept.name} is ${dir} its headcount target (${m.actualPct}% actual vs ${m.targetPct}% target).`;
+}
 
 export function registerRequestRoutes(router) {
   router.get("/requests", (ctx) => {
@@ -33,12 +55,40 @@ export function registerRequestRoutes(router) {
     ctx.html(200, formPage(ctx, { form: {} }));
   });
 
-  router.post("/requests", (ctx) => {
+  router.post("/requests", async (ctx) => {
     if (!requirePermission(ctx, canCreateRequest)) return;
     const scope = departmentScope(ctx.user);
     const form = ctx.body;
+    const action = String(form.action || "submit");
     // managers can only file for their own department
     const departmentId = scope == null ? Number(form.department_id) : scope;
+
+    // ---- AI assist actions: draft justification / estimate band, then re-render ----
+    if (action === "ai_justify" || action === "ai_estimate") {
+      if (!assistReady(ctx)) return ctx.html(200, formPage(ctx, { form, notice: "The assistant is off — a Finance Admin can enable it under Philosophy." }));
+      const dept = getDepartment(ctx.db, departmentId);
+      const s = getSettings(ctx.db);
+      const client = clientFromConfig(ctx.config);
+      try {
+        if (action === "ai_estimate") {
+          if (!String(form.title || "").trim()) return ctx.html(200, formPage(ctx, { form, notice: "Add a role / title first, then estimate." }));
+          const est = await estimateRole({ title: form.title, department: dept?.name || "", phase: s.company_phase, industry: s.industry, client });
+          const merged = { ...form, band_min: est.band_min, band_max: est.band_max };
+          return ctx.html(200, formPage(ctx, { form: merged, notice: `Estimated band ${money(est.band_min)}–${money(est.band_max)}. ${est.rationale} — rough estimate, adjust as needed.` }));
+        }
+        const draft = await draftJustification({
+          role: form.title, department: dept?.name || "", type: form.type,
+          justification: form.justification, current: form.current_hc_narrative, desired: form.new_hc_narrative,
+          targetNote: deptTargetNote(ctx.db, departmentId), client,
+        });
+        const merged = { ...form, ...draft };
+        return ctx.html(200, formPage(ctx, { form: merged, notice: "Drafted with AI — review and edit before submitting." }));
+      } catch (e) {
+        console.error(`[assistant] ${action} failed: ${e && e.message ? e.message : e}`);
+        return ctx.html(200, formPage(ctx, { form, notice: "The assistant couldn't help just now — try again, or fill it in manually." }));
+      }
+    }
+
     const candidate = {
       department_id: departmentId,
       title: form.title, type: form.type,
@@ -142,9 +192,10 @@ function budgetPanel(ctx, deptId, addMoney) {
   </div>`;
 }
 
-function formPage(ctx, { form, errors }) {
+function formPage(ctx, { form, errors, notice }) {
   const scope = departmentScope(ctx.user);
   const depts = listDepartments(ctx.db);
+  const ai = assistReady(ctx);
   const deptField = scope == null
     ? html`<label>Department<select name="department_id" required><option value="">Choose…</option>${depts.map((d) => html`<option value="${d.id}" ${String(form.department_id) === String(d.id) ? raw("selected") : ""}>${d.name}</option>`)}</select></label>`
     : html`<input type="hidden" name="department_id" value="${scope}"><p class="muted small">Department: <b>${getDepartment(ctx.db, scope)?.name || "your team"}</b></p>`;
@@ -152,6 +203,7 @@ function formPage(ctx, { form, errors }) {
     <div class="pagehead"><a class="muted small" href="/requests">← Requests</a><h1>New hiring request</h1>
       <p class="muted">Every request must be justified — including what changes with the new hire. Compensation is a <b>band</b>, not an exact salary.</p></div>
     ${errorList(errors)}
+    ${notice ? html`<div class="flash ok">${notice}</div>` : ""}
     ${scope != null ? budgetPanel(ctx, scope, null) : ""}
     <form method="post" action="/requests">
       ${csrfField(ctx)}
@@ -173,6 +225,7 @@ function formPage(ctx, { form, errors }) {
           <label>Comp band — min<input name="band_min" type="number" min="0" step="any" value="${esc(form.band_min || "")}"></label>
           <label>Comp band — max<input name="band_max" type="number" min="0" step="any" value="${esc(form.band_max || "")}"></label>
         </div>
+        ${ai ? html`<button class="btn ghost sm" name="action" value="ai_estimate" type="submit" formnovalidate>✨ Estimate band with AI</button>` : ""}
       </section>
       <section class="card">
         <h2>Justify the hire</h2>
@@ -192,6 +245,8 @@ function formPage(ctx, { form, errors }) {
           </label>
           <label>Expected $ value / year <span class="hint">optional</span><input name="expected_value_amount" type="number" min="0" step="any" value="${esc(form.expected_value_amount || "")}"></label>
         </div>
+        ${ai ? html`<button class="btn ghost sm" name="action" value="ai_justify" type="submit" formnovalidate>✨ Draft / strengthen with AI</button>
+          <p class="muted small" style="margin-top:4px">Uses your rough notes above (and how this department sits vs. its target). Review before submitting.</p>` : ""}
       </section>
       <button class="btn" type="submit">Submit request</button>
     </form>`;

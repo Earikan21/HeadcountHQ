@@ -172,16 +172,27 @@ function page(ctx) {
       </section>
 
       <section class="card">
-        <h2>AI-assisted import <span class="hint">optional</span></h2>
-        <p class="muted small">When on, the roster import can suggest column mappings, standardize job titles, and
-        categorize departments. It sends <b>only</b> column headers, department names, and job titles to your provider —
-        <b>never</b> salaries, employee names, or any row of data. Off by default; the deterministic importer always
-        remains the fallback.</p>
-        <p class="small" style="margin:4px 0 10px">Provider: <b>${providerLabel}</b> · Key on this server:
+        <h2>AI features <span class="hint">optional</span></h2>
+        <p class="small" style="margin:0 0 10px">Provider: <b>${providerLabel}</b> · Key on this server:
           ${ctx.config.aiImportConfigured
             ? raw('<b class="ok">configured</b>')
             : raw('<b class="off">not configured</b> — set <code>AI_IMPORT_API_KEY</code> in the environment to enable')}.</p>
+
+        <p class="muted small"><b>Assisted import.</b> Suggests column mappings, standardizes job titles, and categorizes
+        departments. Sends <b>only</b> column headers, department names, and job titles — never salaries, names, or any row.</p>
         <label class="radio"><input type="checkbox" name="ai_import_enabled" ${s.ai_import_enabled ? raw("checked") : ""} ${ctx.config.aiImportConfigured ? "" : raw("disabled")}> Enable AI assistance during import</label>
+
+        <p class="muted small" style="margin-top:14px"><b>Headcount assistant.</b> Drafts hiring-request justifications, estimates a
+        role's cost &amp; salary band, and answers questions about your plan with recommendations. Sends the relevant role /
+        <b>aggregate</b> plan context (never individual salaries or names).</p>
+        <label class="radio"><input type="checkbox" name="ai_assistant_enabled" ${s.ai_assistant_enabled ? raw("checked") : ""} ${ctx.config.aiImportConfigured ? "" : raw("disabled")}> Enable the AI assistant</label>
+
+        <div class="warnbox" style="margin-top:14px">
+          <p class="small" style="margin:0 0 8px"><b>Advanced — AI full read.</b> For messy or non-tabular import files, this lets the AI read the
+          <b>entire file, including names and salaries</b>, to reconstruct a clean table. Unlike the options above, this
+          <b>sends sensitive employee data to your provider</b>. Leave off unless you need it.</p>
+          <label class="radio"><input type="checkbox" name="ai_full_read_enabled" ${s.ai_full_read_enabled ? raw("checked") : ""} ${ctx.config.aiImportConfigured ? "" : raw("disabled")}> Enable "AI full read" for messy files (sends full contents)</label>
+        </div>
         <p class="muted small" style="margin-top:8px">Provider, model, and key are configured on the server (environment
         variables), not here. Google Gemini has a free tier — set <code>AI_IMPORT_PROVIDER=gemini</code> with a
         free key from Google AI Studio.</p>

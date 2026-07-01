@@ -4,7 +4,7 @@
  * goes through the auto-escaping `html` tag from ../html.js.
  */
 import { html, raw, esc } from "../html.js";
-import { ROLE_LABELS } from "../authz.js";
+import { ROLE_LABELS, canViewCompTotals } from "../authz.js";
 
 /** A hidden CSRF input bound to the request's double-submit token. */
 export function csrfField(ctx) {
@@ -26,7 +26,9 @@ export const moneyRange = (a, b) =>
 function navGroups(user, active) {
   if (!user) return [];
   const I = (href, label, key) => ({ href, label, on: active === key });
-  const groups = [{ label: "Overview", items: [I("/", "Dashboard", "dashboard")] }];
+  const overview = [I("/", "Dashboard", "dashboard")];
+  if (canViewCompTotals(user)) overview.push(I("/assistant", "Assistant", "assistant"));
+  const groups = [{ label: "Overview", items: overview }];
 
   const people = [I("/roster", "Roster", "roster"), I("/headcount", "Headcount", "headcount"), I("/org", "Org chart", "org"), I("/requests", "Requests", "requests")];
   if (user.role === "finance_admin") people.push(I("/departments", "Departments", "departments"));

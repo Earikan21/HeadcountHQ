@@ -34,6 +34,17 @@ export const setBatchHeaderRow = (db, id, headerRow, rowCount) =>
 export const updateBatchMapping = (db, id, mapping) =>
   db.prepare("UPDATE import_batches SET mapping = ? WHERE id = ?").run(JSON.stringify(mapping), id);
 
+/**
+ * Replace a batch's underlying grid + mapping (used by AI full-read, which turns
+ * a messy file into a clean normalized table that the rest of the pipeline then
+ * treats like any other import). Header row becomes 0.
+ */
+export function replaceBatchMatrix(db, id, matrix, mapping) {
+  db.prepare(
+    "UPDATE import_batches SET raw_rows = ?, header_row = 0, mapping = ?, row_count = ? WHERE id = ?"
+  ).run(JSON.stringify(matrix), JSON.stringify(mapping), Math.max(0, matrix.length - 1), id);
+}
+
 /** Merge a patch into the batch's JSON assumptions blob (AI cleanup lives here). */
 export function updateBatchAssumptions(db, id, patch) {
   const cur = db.prepare("SELECT assumptions FROM import_batches WHERE id = ?").get(id);

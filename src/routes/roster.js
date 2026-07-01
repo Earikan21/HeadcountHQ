@@ -7,7 +7,8 @@ import { parseUpload } from "../domain/adapters.js";
 import * as R from "../domain/roster.js";
 import { logAudit } from "../repos/audit.js";
 import {
-  createBatch, getBatch, updateBatchMapping, updateBatchAssumptions, setBatchHeaderRow, setBatchStatus, listBatches,
+  createBatch, getBatch, updateBatchMapping, updateBatchAssumptions, replaceBatchMatrix,
+  setBatchHeaderRow, setBatchStatus, listBatches,
   upsertDepartmentByName, upsertEmployee, listEmployees, nextEmployeeId, getEmployeeByExtId,
 } from "../repos/roster.js";
 import { ensureSeatForEmployee, vacateSeat, fillSeat, getSeat } from "../repos/seats.js";
@@ -15,12 +16,14 @@ import { listDepartments, getDepartment, setDepartmentCategory } from "../repos/
 import { getSettings } from "../repos/settings.js";
 import { loadedCost as loadedCostFn } from "../domain/philosophy.js";
 import { flagAnomalies, distinctValues } from "../domain/import_ai.js";
-import { clientFromConfig, suggestMapping, classifyDepartments, normalizeTitles } from "../domain/ai_import.js";
+import { clientFromConfig, suggestMapping, classifyDepartments, normalizeTitles, fullReadInterpret } from "../domain/ai_import.js";
 import { recordImportRun } from "../repos/import_runs.js";
 import { FUNCTION_CATEGORIES } from "../data/benchmarks.js";
 
-/** Is the AI assist available right now (configured on the host AND toggled on)? */
+/** Privacy-safe AI assist available (configured on the host AND toggled on)? */
 const aiReady = (ctx) => Boolean(ctx.config.aiImportConfigured) && Boolean(getSettings(ctx.db).ai_import_enabled);
+/** Opt-in full-read available (configured AND the separate full-read toggle on)? */
+const aiFullReady = (ctx) => Boolean(ctx.config.aiImportConfigured) && Boolean(getSettings(ctx.db).ai_full_read_enabled);
 
 const compCell = (user, annual) => {
   if (annual == null) return "—";
@@ -205,6 +208,28 @@ export function registerRosterRoutes(router) {
       suggestionCount: Object.keys(cat.map).length + Object.keys(tit.map).length });
     logAudit(ctx.db, { userId: ctx.user.id, action: "import.ai_cleaned", entity: "import_batch", entityId: batch.id, detail: { categories: Object.keys(cat.map).length, titles: Object.keys(tit.map).length } });
     ctx.redirect(`/roster/import/${batch.id}/review`);
+  });
+
+  // ---- AI full read (opt-in): interpret a messy / non-tabular file ----
+  // Sends the raw file contents to the provider. Gated behind the separate
+  // ai_full_read_enabled setting. No deterministic fallback — errors surface.
+  router.post("/roster/import/:id/fullread", async (ctx) => {
+    if (!requirePermission(ctx, canImportRoster)) return;
+    const batch = getBatch(ctx.db, Number(ctx.params.id));
+    if (!batch || batch.status !== "draft") return ctx.redirect("/roster/import");
+    if (!aiFullReady(ctx)) return ctx.redirect(`/roster/import/${batch.id}/map`);
+    const client = clientFromConfig(ctx.config);
+    try {
+      const res = await fullReadInterpret({ matrix: batch.matrix, client });
+      replaceBatchMatrix(ctx.db, batch.id, res.matrix, res.mapping);
+      recordImportRun(ctx.db, { batchId: batch.id, userId: ctx.user.id, phase: "mapping",
+        usedAi: true, provider: ctx.config.AI_IMPORT_PROVIDER, suggestionCount: res.count });
+      logAudit(ctx.db, { userId: ctx.user.id, action: "import.ai_fullread", entity: "import_batch", entityId: batch.id, detail: { people: res.count, truncated: res.truncated } });
+      ctx.redirect(`/roster/import/${batch.id}/review?fr=ok`);
+    } catch (e) {
+      console.error(`[ai-import] fullread failed: ${e && e.message ? e.message : e}`);
+      ctx.redirect(`/roster/import/${batch.id}/map?fr=failed`);
+    }
   });
 
   // ---- Step 3: review ----
@@ -399,18 +424,28 @@ function mapPage(ctx, { batch, errors }) {
       <div>${raw(badge)}</div>
     </div>`;
   });
-  const aiOn = aiReady(ctx);
   const aiParam = ctx.query.get("ai");
+  const frParam = ctx.query.get("fr");
   const aiNotice = aiParam === "1"
     ? html`<div class="flash ok">AI suggested the mappings below from your column headers and types only — your data stayed on this server. Review and confirm each one.</div>`
     : aiParam === "0"
     ? html`<div class="flash warn">The AI assist was unavailable, so we used the built-in matcher. Review the mappings below.</div>`
     : "";
-  const aiPanel = aiOn
+  const frNotice = frParam === "failed"
+    ? html`<div class="flash warn">AI full read couldn't interpret that file. Try fixing the header row above, or map the columns manually.</div>`
+    : "";
+  const aiPanel = aiReady(ctx)
     ? html`<form method="post" action="/roster/import/${batch.id}/ai-map" class="aiassist">
         ${csrfField(ctx)}
         <div><b>✨ Suggest mappings with AI</b><p class="muted small" style="margin:2px 0 0">Sends only your column <i>names</i> and types — never names, salaries, or any row.</p></div>
         <button class="btn ghost sm" type="submit">Analyze columns</button>
+      </form>`
+    : "";
+  const fullReadPanel = aiFullReady(ctx)
+    ? html`<form method="post" action="/roster/import/${batch.id}/fullread" class="aiassist warn-assist">
+        ${csrfField(ctx)}
+        <div><b>⚠️ Messy or non-tabular file? AI full read</b><p class="muted small" style="margin:2px 0 0">For files that aren't a clean table. Sends the <b>actual file contents</b> (names &amp; salaries) to your provider, then rebuilds a clean table for review.</p></div>
+        <button class="btn ghost sm" type="submit">Read whole file</button>
       </form>`
     : "";
 
@@ -418,9 +453,10 @@ function mapPage(ctx, { batch, errors }) {
     <div class="pagehead"><h1>Map your columns</h1><p class="muted">${batch.filename} · ${batch.rawRows.length} rows</p></div>
     ${wizardSteps("map")}
     ${errorList(errors)}
-    ${aiNotice}
+    ${aiNotice}${frNotice}
     <section class="card">
       ${aiPanel}
+      ${fullReadPanel}
       ${headerRowPicker(ctx, batch)}
       <div class="flash">We matched your file's columns to our standard fields. Confirm or fix each one. <b>*</b> required. For names, map a single <b>Full name</b> column <i>or</i> <b>First name</b> / <b>Last name</b> — whichever your file has.</div>
       <form method="post" action="/roster/import/${batch.id}/map">
@@ -447,6 +483,10 @@ function reviewPage(ctx, { batch, built }) {
   for (const x of flagAnomalies(built.rows)) issues.push(x);
   const errs = issues.filter((x) => x.level === "error").slice(0, 15);
   const warns = issues.filter((x) => x.level === "warn").slice(0, 20);
+
+  const frNotice = ctx.query.get("fr") === "ok"
+    ? html`<div class="flash ok">AI read your file and rebuilt a clean table of ${built.rows.length} row${built.rows.length === 1 ? "" : "s"}. Review below, then import.</div>`
+    : "";
 
   const flags = (list, cls, icon) => list.map((x) => html`<div class="flag ${cls}"><b>Row ${x.row}</b> · ${x.msg}</div>`);
   const preview = built.rows.slice(0, 25).map((r) => {
@@ -493,6 +533,7 @@ function reviewPage(ctx, { batch, built }) {
   const body = html`
     <div class="pagehead"><h1>Review &amp; import</h1><p class="muted">${batch.filename}</p></div>
     ${wizardSteps("review")}
+    ${frNotice}
     <div class="kpis">
       ${kpi("Total rows", s.total)}
       ${kpiC("Clean & ready", s.clean, "good")}
